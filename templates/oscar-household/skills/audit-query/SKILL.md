@@ -12,8 +12,6 @@ license: MIT
 
 Generic filter over OSCAR's domain-audit tables in `oscar.db`. One query returns a JSON page of rows; the agent summarises in natural language for the user.
 
-> **TODO (rewrite).** This skill was written against the deleted `shared/oscar_audit` library + Postgres backend. The intent below is correct; the Python implementation needs to land as inline SQLite queries in this skill or as a small companion script in `oscar-household`. The references to `python -m oscar_audit` are stale.
-
 Currently one stream:
 - `cloud_audit` — every cloud-LLM call (timestamp, uid, trace_id, vendor, lengths, latency, cost-estimate, router score + reason; prompt/response fulltext only when debug-mode is on)
 

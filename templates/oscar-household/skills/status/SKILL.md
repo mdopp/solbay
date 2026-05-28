@@ -12,8 +12,6 @@ license: MIT
 
 Quick "is everything OK?" probe across every OSCAR dependency. Read-only — no state changes.
 
-> **TODO (rewrite).** The implementation needs to call ServiceBay-MCP's `get_health_checks` and `diagnose` tools, **not** run inline probes. ServiceBay shipped a 16-check-type health system in v3.35–v3.37 — templates declare what should be probed (via `create_health_check` at deploy time, registered by `oscar-household`'s `post-deploy.py`), the platform polls outside-in, this skill just reads the aggregated state. Contract doc tracked in [`mdopp/servicebay#543`](https://github.com/mdopp/servicebay/issues/543). The env-var probe table below is vestigial from before the platform's health system was discovered — once the rewrite lands, this skill becomes ~10 lines that call two MCP tools and summarise.
-
 ## When to use
 
 - "OSCAR, bist du da?" / "Bist du wach?"
