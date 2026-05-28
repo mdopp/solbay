@@ -16,7 +16,7 @@ You are working a queue of open GitHub issues on the **`mdopp/oscar`** repo, wit
 - `stacks/oscar/stack.yml` — the bundled OSCAR stack manifest.
 - `plugin.yaml` + `__init__.py` — Hermes "Install-from-Git" plugin packaging.
 
-OSCAR runs **on ServiceBay**, on the **same box ServiceBay uses: `core@192.168.178.100:5888`**. So real-box verification means *deploying the changed OSCAR artifact through ServiceBay onto that box and checking the OSCAR runtime* — the same test procedures the ServiceBay autoloop uses, pointed at OSCAR's pods/skills instead of ServiceBay's own. See Step 3.
+OSCAR runs **on ServiceBay**, on the **same box ServiceBay uses: `<SERVICEBAY_BOX>`**. So real-box verification means *deploying the changed OSCAR artifact through ServiceBay onto that box and checking the OSCAR runtime* — the same test procedures the ServiceBay autoloop uses, pointed at OSCAR's pods/skills instead of ServiceBay's own. See Step 3.
 
 This is pre-production, so the loop may merge changes across the repo — but only after CI green (where CI applies) **and**, on the path-mandated list in Step 3, only after real-box `/verify` green. Security/privacy-sensitive issues open as **draft** PRs and wait for human review.
 
@@ -162,9 +162,9 @@ The gatekeeper package is `voice-gatekeeper/src/gatekeeper/` (`__main__.py` is t
 - `database/**`
 - `plugin.yaml` / `__init__.py`
 
-then invoke `/verify` against `core@192.168.178.100:5888` **before merge**. OSCAR deploys *through* ServiceBay, so the procedure is:
+then invoke `/verify` against `<SERVICEBAY_BOX>` **before merge**. OSCAR deploys *through* ServiceBay, so the procedure is:
 
-1. Reach the box via the same SSH / HTTP-API / MCP paths ServiceBay uses (`core@192.168.178.100:5888`; host-key, MCP-token, and `Origin`-header gotchas are the same as ServiceBay's reference). The `mdopp/oscar` registry must be enabled in ServiceBay on that box so the changed templates resolve.
+1. Reach the box via the same SSH / HTTP-API / MCP paths ServiceBay uses (`<SERVICEBAY_BOX>`; host-key, MCP-token, and `Origin`-header gotchas are the same as ServiceBay's reference). The `mdopp/oscar` registry must be enabled in ServiceBay on that box so the changed templates resolve.
 2. **Template / skill change** → install or update the affected template via ServiceBay's install path (API/MCP), then confirm: the pod becomes healthy; for skill changes, `sudo ls /mnt/data/stacks/oscar-household/skills/` is populated and `podman exec hermes-hermes ls /opt/data/skills/oscar/` shows the skill and Hermes' loader log lists it.
 3. **voice-gatekeeper / database change** → the image must exist on the box to run live. CI builds these on PR but only *pushes* on `main`/tags, so a pre-merge live check needs either a locally-built+loaded image or a note that full live verification happens post-merge once GHCR has the new image. Confirm the Wyoming bridge connects (no `AsrModel.__init__()` crash class — see the wyoming pin in `voice-gatekeeper/pyproject.toml`) and the schema-init sidecar runs `alembic upgrade head` cleanly.
 4. **plugin.yaml / __init__.py** → verify Hermes' Install-from-Git path still loads the plugin.
@@ -210,7 +210,7 @@ Closes #<N>.
 ## Verification
 - [ ] pytest (if voice-gatekeeper/database touched)
 - [ ] YAML/frontmatter valid (if templates/skills touched)
-- [ ] /verify on core@192.168.178.100 via ServiceBay (if path-mandated — see Step 3)
+- [ ] /verify on <SERVICEBAY_BOX> via ServiceBay (if path-mandated — see Step 3)
 ```
 
 ### PR creation — by gate
@@ -249,7 +249,7 @@ Next eligible issue: #NN.
 
 ## End-to-end validation: does OSCAR work within the ServiceBay install?
 
-This is the loop's ultimate goal — per-PR `/verify` checks one change; this checks that **OSCAR actually works as a whole on the real ServiceBay box** (`core@192.168.178.100:5888`). Run it as track (d), after a batch of OSCAR PRs merges, or whenever the queue drains.
+This is the loop's ultimate goal — per-PR `/verify` checks one change; this checks that **OSCAR actually works as a whole on the real ServiceBay box** (`<SERVICEBAY_BOX>`). Run it as track (d), after a batch of OSCAR PRs merges, or whenever the queue drains.
 
 **Procedure (golden-path smoke, on the box via ServiceBay):**
 
@@ -290,7 +290,7 @@ Record the run + outcome + date in `state.last_e2e` and `state.notes[]`. A fully
 ## Reference
 
 - Repo: `mdopp/oscar`. Labels: `bug`, `enhancement`, `skill`, `template`, `infrastructure`, `phase-0`, `phase-1`, `documentation`, `good first issue`, `help wanted`, `question`.
-- Real-box access: `core@192.168.178.100:5888` — the **same** box and access paths ServiceBay uses (SSH / HTTP API / MCP; host-key-change, stale-MCP-token, and `Origin`-header gotchas all apply). OSCAR is deployed onto it *through* ServiceBay, so its `mdopp/oscar` registry must be enabled there.
+- Real-box access: `<SERVICEBAY_BOX>` — the **same** box and access paths ServiceBay uses (SSH / HTTP API / MCP; host-key-change, stale-MCP-token, and `Origin`-header gotchas all apply). OSCAR is deployed onto it *through* ServiceBay, so its `mdopp/oscar` registry must be enabled there. `<SERVICEBAY_BOX>` is a placeholder for the box's actual SSH/HTTP/MCP address — supply it from local config (project `CLAUDE.md` or memory), not committed to this public repo.
 - Relationship: OSCAR templates/skills are ServiceBay Pod-YAML artifacts; `voice-gatekeeper`/`database` are containers inside the `oscar-household` pod (hostNetwork) that reach ServiceBay's `voice` template via host loopback.
 - CI: `.github/workflows/build-images.yml` builds `oscar-gatekeeper` + `oscar-household-init` images (PR = build-only on `voice-gatekeeper/**`+`database/**` paths; push/tag = publish to GHCR).
 - Python gates: `voice-gatekeeper` has pytest (`pip install -e '.[test]' && pytest`); `database` is alembic.
