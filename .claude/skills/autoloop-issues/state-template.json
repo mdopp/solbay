@@ -1,0 +1,12 @@
+{
+  "started": null,
+  "last_invocation": null,
+  "completed": [],
+  "in_progress": null,
+  "skipped": [],
+  "blocked": [],
+  "upstream_waits": [],
+  "notes": [],
+  "last_e2e": null,
+  "last_codebase_eval": null
+}

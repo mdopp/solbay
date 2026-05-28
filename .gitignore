@@ -24,3 +24,7 @@ dist/
 .DS_Store
 *.swp
 *.swo
+
+# Track .claude/skills/ (project skills live in-repo); ignore runtime state (mirrors mdopp/servicebay)
+/.claude/*
+!/.claude/skills/
