@@ -33,16 +33,44 @@ from .speaker import get_extractor, resolve_speaker
 from .tts import synthesize_to_writer
 
 
+def client_id_from_peername(peer: object) -> str | None:
+    """Stable per-connection client id from a socket peername.
+
+    Wyoming's AsyncEventHandler exposes no client identity, so the
+    originating satellite is keyed by its socket peer host. TCP peernames
+    are (host, port); a UNIX socket yields a str path. Returns None when
+    the peer is unavailable so callers fall back to 'unknown'.
+    """
+    if isinstance(peer, (tuple, list)):
+        host = peer[0] if peer else None
+        return str(host) if host else None
+    if isinstance(peer, str) and peer:
+        return peer
+    return None
+
+
 class GatekeeperHandler(AsyncEventHandler):
     """One connection = one pipeline turn."""
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.trace_id = str(uuid.uuid4())
+        self.client_id = self._resolve_client_id()
         self._audio_start: AudioStart | None = None
         self._audio_buffer: list[AudioChunk] = []
         self._hermes = HermesClient(settings.hermes_url, settings.hermes_token)
-        log.info("gatekeeper.session.open", trace_id=self.trace_id)
+        log.info(
+            "gatekeeper.session.open",
+            trace_id=self.trace_id,
+            client_id=self.client_id,
+        )
+
+    def _resolve_client_id(self) -> str | None:
+        try:
+            peer = self.writer.get_extra_info("peername")
+        except Exception:  # noqa: BLE001 — peer info is best-effort
+            return None
+        return client_id_from_peername(peer)
 
     async def handle_event(self, event: Event) -> bool:
         if AudioStart.is_type(event.type):
