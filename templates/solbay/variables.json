@@ -11,8 +11,19 @@
   },
   "GATEKEEPER_IMAGE": {
     "type": "text",
-    "description": "Image tag for Solilos's gatekeeper container. Leave default unless you're running a fork PoC.",
+    "description": "Image tag for Solilos's gatekeeper container. Leave default for the base bridge. For Phase-2 speaker-ID set this to ghcr.io/mdopp/solilos-gatekeeper-ml:latest (bakes in SpeechBrain/torch) and turn on SOLILOS_SPEAKER_ID_ENABLED.",
     "default": "ghcr.io/mdopp/solilos-gatekeeper:latest"
+  },
+  "SOLILOS_SPEAKER_ID_ENABLED": {
+    "type": "select",
+    "description": "Phase-2 speaker-ID (#84): resolve which resident is speaking per voice turn from enrolled voice embeddings. BIOMETRIC — stores per-resident voice fingerprints in solilos.db. Requires the solilos-gatekeeper-ml image (see GATEKEEPER_IMAGE); with the base image this stays inert (falls back to DEFAULT_UID). Off by default.",
+    "options": ["false", "true"],
+    "default": "false"
+  },
+  "SOLILOS_SPEAKER_ID_THRESHOLD": {
+    "type": "text",
+    "description": "Cosine-similarity threshold (0..1) above which a voice turn is attributed to an enrolled resident; below it Solilos falls back to DEFAULT_UID. Higher = stricter. Default 0.55.",
+    "default": "0.55"
   },
   "GATEKEEPER_PORT": {
     "type": "text",
