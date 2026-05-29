@@ -14,7 +14,7 @@ The `oscar-household` ServiceBay template bind-mounts this directory into the He
 | `audit-query/` | `oscar-audit-query` | 0 | Read-only query over `cloud_audit` (and future Phase-3a household-domain tables) in `oscar.db`. |
 | `debug-set/` | `oscar-debug-set` | 0 | Admin: toggle `system_settings.debug_mode` row in `oscar.db` (verbose logging on demand, TTL-bounded). |
 
-> **TODO.** All three skill specs were written against the pre-lean-reset world (shared `oscar_db`/`oscar_audit`/`oscar_health` libraries + Postgres backend). The skills carry a `TODO (rewrite)` banner pointing at the inline-SQLite implementation that needs to land. The agentskills.io frontmatter and the operating-sequence prose have been updated for the SQLite world; the actual Python tool calls inside each skill are the follow-up.
+All three operate directly against `oscar.db` (inline SQLite) and ServiceBay-MCP (`get_health_checks`/`diagnose`) — no external `oscar_*` libraries or separate companion scripts.
 
 ## What's *not* a skill in OSCAR
 

@@ -14,8 +14,6 @@ Cluster-wide debug-mode toggle. When on, OSCAR-owned containers log full prompts
 
 Source of truth is the `debug_mode` row in `system_settings` in `oscar.db` (the SQLite file in `oscar-household`'s volume, default `/var/lib/oscar/oscar.db`). This skill rewrites that row; components re-query `system_settings` on every audit event (no caching > 5 s), so the change propagates within ~5 seconds without restarts.
 
-> **TODO (rewrite).** This skill was written against the deleted `shared/oscar_logging.admin` CLI + Postgres backend. The intent below is correct; the Python implementation needs to land as inline SQLite queries in this skill or as a small companion script in `oscar-household`. The references to `python -m oscar_logging.admin` are stale.
-
 ## When to use
 
 - "Schalt mal Debug-Mode an für eine Stunde."
