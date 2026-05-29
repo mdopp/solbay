@@ -58,10 +58,16 @@ class Settings:
             hermes_url=os.environ["HERMES_URL"],
             hermes_token=os.environ.get("HERMES_TOKEN", ""),
             default_uid=os.environ.get("DEFAULT_UID", "michael"),
-            push_host=os.environ.get("PUSH_HOST", "0.0.0.0"),
+            # Loopback by default: the push + MCP listeners only ever serve
+            # Hermes, which shares the host netns (hostNetwork) and reaches
+            # them over 127.0.0.1. Binding 0.0.0.0 under hostNetwork would
+            # expose them on the host's LAN interface, where an empty token
+            # leaves them unauthenticated (#116). Only the Wyoming port
+            # (GATEKEEPER_URI) needs the LAN, for satellites.
+            push_host=os.environ.get("PUSH_HOST", "127.0.0.1"),
             push_port=int(os.environ.get("PUSH_PORT", "10750")),
             push_token=os.environ.get("PUSH_TOKEN", ""),
-            mcp_host=os.environ.get("MCP_HOST", "0.0.0.0"),
+            mcp_host=os.environ.get("MCP_HOST", "127.0.0.1"),
             mcp_port=int(os.environ.get("MCP_PORT", "10760")),
             mcp_token=os.environ.get("GATEKEEPER_MCP_TOKEN", ""),
             oscar_db_path=os.environ.get("OSCAR_DB_PATH", "/var/lib/oscar/oscar.db"),

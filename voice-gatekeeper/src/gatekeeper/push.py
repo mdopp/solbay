@@ -6,7 +6,9 @@ in the configured device map, synthesize via Piper, and forward the
 resulting AudioStart/Chunk*/AudioStop events to the device's Wyoming URI.
 
 Auth: bearer token (`PUSH_TOKEN` env). Empty token disables auth — fine
-for a pod-internal listener since the port isn't routed outside the pod.
+for the default loopback bind (`PUSH_HOST=127.0.0.1`), where only Hermes
+on the same host reaches it. If an operator rebinds it off loopback, set a
+token (under hostNetwork, 0.0.0.0 means the LAN — see #116).
 """
 
 from __future__ import annotations

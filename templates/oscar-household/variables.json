@@ -45,7 +45,7 @@
   },
   "PUSH_TOKEN": {
     "type": "secret",
-    "description": "Bearer token Hermes presents on the gatekeeper's `POST /push` endpoint. Pod-internal listener; leave blank during local-only testing, set a value once external callers might hit it."
+    "description": "Bearer token Hermes presents on the gatekeeper's `POST /push` endpoint. The listener binds loopback (127.0.0.1) so only Hermes on the same host reaches it; a blank token disables auth, which is fine for that loopback-only default. Set a value only if you change PUSH_HOST to expose the endpoint beyond loopback."
   },
   "HA_MCP_URL": {
     "type": "text",
@@ -72,7 +72,7 @@
   },
   "GATEKEEPER_MCP_TOKEN": {
     "type": "secret",
-    "description": "Bearer token Hermes presents to the gatekeeper's room MCP server. Pod-internal listener; leave blank during local-only testing, set a value once external callers might reach it."
+    "description": "Bearer token Hermes presents to the gatekeeper's room MCP server. The listener binds loopback (127.0.0.1) so only Hermes on the same host reaches it; a blank token disables auth, which is fine for that loopback-only default. Set a value only if you change MCP_HOST to expose the endpoint beyond loopback."
   },
   "LLDAP_GROUP": {
     "type": "text",
