@@ -51,6 +51,30 @@ def test_push_port_default(monkeypatch):
     assert s.push_port == 10750
 
 
+def test_push_and_mcp_hosts_default_to_loopback(monkeypatch):
+    # #116: under hostNetwork a 0.0.0.0 bind exposes these on the LAN
+    # where a blank token is unauthenticated. They only ever serve Hermes
+    # over loopback, so the default must stay 127.0.0.1.
+    monkeypatch.delenv("PUSH_HOST", raising=False)
+    monkeypatch.delenv("MCP_HOST", raising=False)
+    s = _fresh_settings(monkeypatch, {"HERMES_URL": "http://hermes:8000"})
+    assert s.push_host == "127.0.0.1"
+    assert s.mcp_host == "127.0.0.1"
+
+
+def test_push_and_mcp_hosts_overridable(monkeypatch):
+    s = _fresh_settings(
+        monkeypatch,
+        {
+            "HERMES_URL": "http://hermes:8000",
+            "PUSH_HOST": "0.0.0.0",
+            "MCP_HOST": "0.0.0.0",
+        },
+    )
+    assert s.push_host == "0.0.0.0"
+    assert s.mcp_host == "0.0.0.0"
+
+
 def test_hermes_url_is_required(monkeypatch):
     monkeypatch.delenv("HERMES_URL", raising=False)
     import gatekeeper.config as cfg_mod

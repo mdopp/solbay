@@ -89,19 +89,23 @@ spec:
     - name: DEFAULT_UID
       value: "{{DEFAULT_UID}}"
     # Push endpoint — Hermes calls POST /push for cron-fire / proactive
-    # deliveries. Pod-internal listener, not exposed via hostPort.
+    # deliveries. Bound to loopback: Hermes shares the host netns
+    # (hostNetwork) and reaches it at 127.0.0.1. A 0.0.0.0 bind under
+    # hostNetwork would put this on the LAN, where a blank PUSH_TOKEN is
+    # unauthenticated (#116). Not exposed via hostPort.
     - name: PUSH_HOST
-      value: "0.0.0.0"
+      value: "127.0.0.1"
     - name: PUSH_PORT
       value: "10750"
     - name: PUSH_TOKEN
       value: "{{PUSH_TOKEN}}"
     # Room MCP server — Hermes calls set_room/list_rooms here to self-enrol
-    # a satellite's room without holding PUSH_TOKEN (#104). Pod-internal
-    # streamable-HTTP listener; MCP_PORT is hard-coded like PUSH_PORT and
-    # must match the port in GATEKEEPER_MCP_URL (10760).
+    # a satellite's room without holding PUSH_TOKEN (#104). Bound to
+    # loopback for the same reason as PUSH_HOST (#116): Hermes reaches it
+    # at 127.0.0.1 via GATEKEEPER_MCP_URL. MCP_PORT is hard-coded like
+    # PUSH_PORT and must match the port in GATEKEEPER_MCP_URL (10760).
     - name: MCP_HOST
-      value: "0.0.0.0"
+      value: "127.0.0.1"
     - name: MCP_PORT
       value: "10760"
     - name: GATEKEEPER_MCP_TOKEN
