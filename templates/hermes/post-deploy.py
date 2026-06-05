@@ -41,6 +41,14 @@ import urllib.error
 import urllib.request
 
 
+# A ServiceBay-minted MCP token is `sb_<8-hex-id>_<base32-ish-secret>`. Only
+# this shape is accepted by ServiceBay's `/mcp` `verifyToken`; any other value
+# is a permanent 401 (#126). Used to refuse a junk token and to self-heal a box
+# that already wrote one.
+SB_MCP_TOKEN_RE = re.compile(r"^sb_[0-9a-f]{8}_[A-Z2-9]+$")
+SB_MCP_URL = "http://127.0.0.1:5888/mcp"
+
+
 def env(key: str, default: str = "") -> str:
     val = os.environ.get(key, default)
     return val if val else default
@@ -393,6 +401,24 @@ def write_config_yaml(
     return config_path
 
 
+def _provision_sb_mcp_token_once(sb_api: str, token_name: str) -> str | None:
+    """One mint attempt against the canonical api-tokens route. Returns the
+    `sb_`-shaped secret, or None on any failure."""
+    # Canonical route; `/api/system/mcp-tokens` is only an alias on newer
+    # ServiceBay and 404s on some versions (#126).
+    status, body = post_json(
+        f"{sb_api}/api/system/api-tokens",
+        {"name": token_name, "scopes": ["read", "lifecycle"]},
+        timeout=15,
+    )
+    if status != 200 or not isinstance(body, dict):
+        return None
+    secret = body.get("secret")
+    if isinstance(secret, str) and SB_MCP_TOKEN_RE.match(secret):
+        return secret
+    return None
+
+
 def provision_sb_mcp_token(sb_api: str, token_name: str = "hermes-mcp") -> str | None:
     """Mint a long-lived SB-MCP token via the ServiceBay HTTP API and
     return the bearer secret. Uses the `X-SB-Internal-Token` server-to-
@@ -406,42 +432,92 @@ def provision_sb_mcp_token(sb_api: str, token_name: str = "hermes-mcp") -> str |
                       from chat without bouncing the user back to the
                       ServiceBay dashboard.
 
-    Returns the freshly-minted secret on success, None on any failure
-    (caller falls back to leaving SB-MCP unwired — chat still works,
-    just without the SB-introspection tool).
+    Retries a few times with a short backoff — the usual cause of a
+    transient failure is the SB-on-loopback readiness race (#126). Returns
+    the freshly-minted `sb_`-shaped secret on success, None when every
+    attempt failed. The caller must NOT persist any non-`sb_` fallback.
     """
-    status, body = post_json(
-        f"{sb_api}/api/system/mcp-tokens",
-        {"name": token_name, "scopes": ["read", "lifecycle"]},
-        timeout=15,
-    )
-    if status == 200 and isinstance(body, dict):
-        secret = body.get("secret")
-        if isinstance(secret, str) and secret:
+    attempts = 4
+    for attempt in range(1, attempts + 1):
+        secret = _provision_sb_mcp_token_once(sb_api, token_name)
+        if secret:
             jlog(
                 "info",
                 "hermes:sb-mcp",
                 "minted SB-MCP token for Hermes auto-wiring",
                 name=token_name,
-                id=(body.get("token") or {}).get("id")
-                if isinstance(body.get("token"), dict)
-                else None,
+                attempt=attempt,
             )
             return secret
+        if attempt < attempts:
+            time.sleep(3)
     jlog(
         "warn",
         "hermes:sb-mcp",
-        "could not mint SB-MCP token via SB API — SB-MCP will not be auto-wired into config.yaml; mint from Settings → Integrations → MCP and add the entry by hand",
-        status=status,
+        "could not mint SB-MCP token via SB API after retries — leaving SB-MCP unwired (a missing entry is more diagnosable than a silently-401 one); mint from Settings → Integrations → MCP and add the entry by hand",
     )
     return None
 
 
+def probe_sb_mcp_token(token: str) -> bool:
+    """Live-validate a bearer against ServiceBay's `/mcp` with a JSON-RPC
+    `initialize`. 200 = registered + accepted; 401 = stale/junk. A
+    connection failure returns True so a transient loopback hiccup doesn't
+    trigger a needless re-mint when the shape already passed (#126)."""
+    if not token:
+        return False
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "hermes-post-deploy", "version": "1"},
+        },
+    }
+    req = urllib.request.Request(
+        SB_MCP_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+    )
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Accept", "application/json, text/event-stream")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return 200 <= resp.status < 300
+    except urllib.error.HTTPError as e:
+        return e.code != 401
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return True
+
+
+def _extract_servicebay_bearer(mcp_block: str) -> str | None:
+    """Pull the `servicebay:` entry's bearer token out of an mcp_servers
+    block string. Returns the token (any shape) or None if absent."""
+    in_sb = False
+    for line in mcp_block.splitlines():
+        stripped = line.strip()
+        # Entry keys sit at 2-space indent; `servicebay:` opens its sub-block.
+        if line[:2] == "  " and line[:3] != "   " and stripped.endswith(":"):
+            in_sb = stripped == "servicebay:"
+            continue
+        if in_sb and stripped.startswith("Authorization:"):
+            m = re.search(r"Bearer\s+(\S+)", stripped)
+            return m.group(1).strip('"') if m else None
+    return None
+
+
 def ensure_sb_mcp_servers_block(config_path: str, sb_api: str) -> bool:
-    """Append a `mcp_servers.servicebay:` entry to config.yaml when one
-    is not already present. Mints a fresh SB-MCP token via the API and
-    writes the entry inline. Idempotent: re-runs of post-deploy.py see
-    the existing block (preserved by `write_config_yaml`) and skip.
+    """Ensure config.yaml carries a `mcp_servers.servicebay:` entry with a
+    VALID bearer. Mints a fresh SB-MCP token and writes the entry inline.
+
+    Self-heal (#126): a present `servicebay:` entry is NOT treated as done.
+    We validate its bearer — it must be `sb_`-shaped and live-probe 200
+    against /mcp — and re-mint + rewrite when it's invalid (a box that
+    already persisted the junk fallback token self-corrects on redeploy).
+    A still-valid token is left untouched (idempotent no-op).
 
     Returns True when the file was mutated (signals the caller to
     trigger a restart so Hermes re-reads the config).
@@ -468,12 +544,16 @@ def ensure_sb_mcp_servers_block(config_path: str, sb_api: str) -> bool:
         return False
 
     existing_mcp = _extract_top_level_block(existing, "mcp_servers")
-    # If the block already contains a `servicebay:` key (at any indent
-    # that's deeper than column 0), assume it's wired and bail. The
-    # cheap substring check is safe here because YAML keys at column 2
-    # or deeper are unambiguous — comments don't get a `key:` form.
-    if "servicebay:" in existing_mcp:
-        return False
+    current_token = _extract_servicebay_bearer(existing_mcp)
+    if current_token:
+        if SB_MCP_TOKEN_RE.match(current_token) and probe_sb_mcp_token(current_token):
+            # Already wired with a valid, accepted token — nothing to do.
+            return False
+        jlog(
+            "warn",
+            "hermes:sb-mcp",
+            "existing servicebay-mcp token is invalid (bad shape or 401) — re-minting",
+        )
 
     secret = provision_sb_mcp_token(sb_api)
     if not secret:
@@ -481,15 +561,19 @@ def ensure_sb_mcp_servers_block(config_path: str, sb_api: str) -> bool:
 
     new_entry_lines = [
         "  servicebay:\n",
-        '    url: "http://127.0.0.1:5888/mcp"\n',
+        f'    url: "{SB_MCP_URL}"\n',
         "    headers:\n",
         f'      Authorization: "Bearer {secret}"\n',
     ]
 
-    if existing_mcp:
-        # Append into the existing block: replace the existing block
-        # with itself + the new entry (preserves any other entries like
-        # `home_assistant:` that OSCAR may have written).
+    if current_token is not None:
+        # Replace the stale servicebay: sub-block in place, preserving any
+        # other entries (e.g. home_assistant:) around it.
+        healed_mcp = _replace_servicebay_entry(existing_mcp, new_entry_lines)
+        new_content = existing.replace(existing_mcp, healed_mcp, 1)
+    elif existing_mcp:
+        # Block exists but no servicebay entry — append into it (preserves
+        # other entries OSCAR may have written).
         appended = existing_mcp.rstrip("\n") + "\n" + "".join(new_entry_lines)
         new_content = existing.replace(existing_mcp, appended, 1)
     else:
@@ -504,7 +588,7 @@ def ensure_sb_mcp_servers_block(config_path: str, sb_api: str) -> bool:
         jlog(
             "error",
             "hermes:sb-mcp",
-            "could not write config.yaml after appending servicebay entry",
+            "could not write config.yaml after writing servicebay entry",
             path=config_path,
             error=str(e),
         )
@@ -513,10 +597,37 @@ def ensure_sb_mcp_servers_block(config_path: str, sb_api: str) -> bool:
     jlog(
         "info",
         "hermes:sb-mcp",
-        "wrote mcp_servers.servicebay block — Hermes will reach SB-MCP at http://127.0.0.1:5888/mcp on next start",
+        "wrote mcp_servers.servicebay block — Hermes will reach SB-MCP on next start",
         path=config_path,
+        url=SB_MCP_URL,
     )
     return True
+
+
+def _replace_servicebay_entry(mcp_block: str, new_entry_lines: list[str]) -> str:
+    """Swap the existing `servicebay:` sub-block in an mcp_servers block for
+    `new_entry_lines`, preserving every other entry. The sub-block runs from
+    the `  servicebay:` line to the next 2-space-indented entry key or EOF."""
+    lines = mcp_block.splitlines(keepends=True)
+    out: list[str] = []
+    in_sb = False
+    for line in lines:
+        is_entry_key = (
+            line[:2] == "  " and line[:3] != "   " and line.strip().endswith(":")
+        )
+        if is_entry_key and line.strip() == "servicebay:":
+            in_sb = True
+            out.extend(new_entry_lines)
+            continue
+        if in_sb:
+            # Stay in the stale sub-block until the next entry key / dedent.
+            if is_entry_key or (line.strip() and line[:1] not in (" ", "\t")):
+                in_sb = False
+                out.append(line)
+            # else: still inside the stale servicebay block → drop
+            continue
+        out.append(line)
+    return "".join(out)
 
 
 def restart_hermes(sb_api: str) -> bool:

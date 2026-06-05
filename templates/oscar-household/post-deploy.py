@@ -75,11 +75,19 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+
+# A ServiceBay-minted MCP token looks like `sb_<8-hex-id>_<base32-ish-secret>`.
+# Only this shape is accepted by ServiceBay's `/mcp` `verifyToken`; the random
+# opaque SERVICEBAY_MCP_TOKEN fallback never matches → permanent 401. We use
+# this both to refuse persisting a junk token and to self-heal a box that
+# already has one (#126).
+SB_MCP_TOKEN_RE = re.compile(r"^sb_[0-9a-f]{8}_[A-Z2-9]+$")
 
 
 # ───── env ─────────────────────────────────────────────────────────────────
@@ -260,20 +268,13 @@ def sb_post_json(
         return 0, None
 
 
-def mint_servicebay_mcp_token() -> str | None:
-    """Mint a real MCP token from ServiceBay's tokens API, so the value
-    we splice into hermes' config.yaml is one ServiceBay actually
-    recognises. Without this, the random SERVICEBAY_MCP_TOKEN that
-    `assemble` generates is never registered and Hermes gets
-    401 Unauthorized on every `/mcp` call (observed 2026-05-25).
-
-    Returns the minted secret on success, or None on failure - the
-    caller should fall back to whatever was in SERVICEBAY_MCP_TOKEN
-    (even though that won't actually work, it preserves the older
-    behaviour for nodes the API call can't reach).
-    """
+def _mint_servicebay_mcp_token_once() -> str | None:
+    """One mint attempt. Returns the minted secret, or None on any
+    failure (non-200, missing/non-`sb_`-shaped secret)."""
+    # Canonical route; `/api/system/mcp-tokens` is only an alias on newer
+    # ServiceBay and 404s on some versions (#126).
     status, body = sb_post_json(
-        "/api/system/mcp-tokens",
+        "/api/system/api-tokens",
         # `read` is enough for the audit-query / status skills (they
         # read logs + service health); `mutate` and `lifecycle` cover
         # the future MCP-driven self-heal flows in the household stack.
@@ -281,33 +282,80 @@ def mint_servicebay_mcp_token() -> str | None:
         timeout=15,
     )
     if status != 200 or not isinstance(body, dict):
-        jlog(
-            "warn",
-            "oscar-household:mcp",
-            "could not mint servicebay-mcp token via API; falling back to env value (likely unregistered, expect 401 from Hermes)",
-            status=status,
-        )
         return None
     secret = body.get("secret")
-    if not isinstance(secret, str) or not secret:
-        jlog(
-            "warn",
-            "oscar-household:mcp",
-            "token mint succeeded but response missing `secret`; falling back to env value",
-        )
+    if not isinstance(secret, str) or not SB_MCP_TOKEN_RE.match(secret):
         return None
-    token_id = (
-        (body.get("token") or {}).get("id")
-        if isinstance(body.get("token"), dict)
-        else None
-    )
-    jlog(
-        "info",
-        "oscar-household:mcp",
-        "minted servicebay-mcp token",
-        token_id=token_id,
-    )
     return secret
+
+
+def mint_servicebay_mcp_token(attempts: int = 4, backoff_s: float = 3.0) -> str | None:
+    """Mint a real MCP token from ServiceBay's tokens API, so the value
+    we splice into hermes' config.yaml is one ServiceBay actually
+    recognises. Without this, the random SERVICEBAY_MCP_TOKEN that
+    `assemble` generates is never registered and Hermes gets
+    401 Unauthorized on every `/mcp` call (observed 2026-05-25).
+
+    Retries a few times with a short backoff: the usual cause of a
+    transient `None` is the SB-on-loopback readiness race (the post-deploy
+    can fire before ServiceBay's own API answers on 127.0.0.1). Returns
+    the minted secret on success, or None when every attempt failed — the
+    caller must NOT persist a fallback (a non-`sb_` token is a permanent
+    401; #126).
+    """
+    for attempt in range(1, attempts + 1):
+        secret = _mint_servicebay_mcp_token_once()
+        if secret:
+            jlog(
+                "info",
+                "oscar-household:mcp",
+                "minted servicebay-mcp token",
+                attempt=attempt,
+            )
+            return secret
+        if attempt < attempts:
+            time.sleep(backoff_s)
+    jlog(
+        "warn",
+        "oscar-household:mcp",
+        "could not mint servicebay-mcp token after retries; skipping servicebay-mcp entry (a missing entry is more diagnosable than a silently-401 one)",
+        attempts=attempts,
+    )
+    return None
+
+
+def probe_servicebay_mcp_token(token: str) -> bool:
+    """Live-validate a bearer against ServiceBay's `/mcp` with a JSON-RPC
+    `initialize`. 200 = the token is registered and accepted; 401 = stale
+    / junk. Connection failure returns True (don't re-mint on a transient
+    loopback hiccup — shape already passed)."""
+    if not token or not SERVICEBAY_MCP_URL:
+        return False
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "oscar-household-post-deploy", "version": "1"},
+        },
+    }
+    req = urllib.request.Request(
+        SERVICEBAY_MCP_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+    )
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Accept", "application/json, text/event-stream")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return 200 <= resp.status < 300
+    except urllib.error.HTTPError as e:
+        return e.code != 401
+    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError):
+        return True
 
 
 # ───── config.yaml merge ───────────────────────────────────────────────────
@@ -424,6 +472,31 @@ def strip_mcp_servers_block(content: str) -> str:
                 out.append(line)
             # else: still inside the block (indented, blank, or comment) → drop
     return "".join(out)
+
+
+def existing_servicebay_mcp_token() -> str | None:
+    """Pull the current `servicebay-mcp` bearer out of the live config.yaml
+    (read through the hermes container). Returns the token only when it's
+    present AND `sb_`-shaped — a junk/non-`sb_` value reads as None so the
+    caller won't treat it as worth preserving. Used to avoid re-minting (or
+    dropping) a token that's already valid when a redeploy's mint races SB
+    readiness (#126)."""
+    content = read_config_via_container()
+    if not content:
+        return None
+    in_sb = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if line[:1] not in (" ", "\t"):
+            in_sb = False  # left the mcp_servers block
+        if stripped.startswith("servicebay-mcp:"):
+            in_sb = True
+            continue
+        if in_sb and stripped.startswith("Authorization:"):
+            m = re.search(r"Bearer\s+(\S+)", stripped)
+            token = m.group(1).strip('"') if m else ""
+            return token if SB_MCP_TOKEN_RE.match(token) else None
+    return None
 
 
 def render_mcp_block(servers: list[tuple[str, str, str]]) -> str:
@@ -569,21 +642,31 @@ def collect_mcp_servers() -> list[tuple[str, str, str]]:
         )
     if SERVICEBAY_MCP_URL:
         # SERVICEBAY_MCP_TOKEN from `assemble` is a random value that nothing
-        # registered against ServiceBay's mcp-tokens table. Mint a real one
-        # here and use it; if the API call fails (e.g. ServiceBay not reachable
-        # over the loopback yet) fall back to the env value so the splice
-        # still happens — Hermes will then 401 on /mcp until an operator
-        # re-mints, which is at least more visible than silently skipping.
-        token = mint_servicebay_mcp_token() or SERVICEBAY_MCP_TOKEN
-        if token:
-            servers.append(("servicebay-mcp", SERVICEBAY_MCP_URL, token))
-        else:
+        # registered against ServiceBay's mcp-tokens table — splicing it in
+        # yields a permanent 401 (#126). Self-heal: if config.yaml already
+        # carries a VALID (`sb_`-shaped, live-probed 200) servicebay-mcp
+        # token, keep it; otherwise mint a fresh one. Only when both fail do
+        # we SKIP the entry — never persist the junk SERVICEBAY_MCP_TOKEN
+        # fallback. A missing entry is more diagnosable than a silent 401.
+        current = existing_servicebay_mcp_token()
+        if current and probe_servicebay_mcp_token(current):
             jlog(
                 "info",
                 "oscar-household:mcp",
-                "servicebay-mcp skipped",
-                reason="mint failed and no fallback token in env",
+                "servicebay-mcp token still valid; keeping existing",
             )
+            servers.append(("servicebay-mcp", SERVICEBAY_MCP_URL, current))
+        else:
+            token = mint_servicebay_mcp_token()
+            if token:
+                servers.append(("servicebay-mcp", SERVICEBAY_MCP_URL, token))
+            else:
+                jlog(
+                    "warn",
+                    "oscar-household:mcp",
+                    "servicebay-mcp skipped",
+                    reason="no valid existing token and mint failed (will retry on next redeploy)",
+                )
     else:
         jlog(
             "info",
