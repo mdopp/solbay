@@ -76,6 +76,11 @@ def _extract_session_id(body: Any) -> str:
 def _extract_reply(body: Any) -> str:
     if not isinstance(body, dict):
         return ""
+    msg = body.get("message")
+    if isinstance(msg, dict):
+        content = msg.get("content") or ""
+        if content:
+            return str(content)
     return str(
         body.get("output")
         or body.get("reply")
