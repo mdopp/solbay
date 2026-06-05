@@ -1,12 +1,12 @@
 ---
-name: oscar-room-enrollment
-description: Use when a resident gives a room-dependent voice command (turn on the light, set the temperature here, what's the time in this room) but OSCAR does not know which room the satellite is in, OR when a resident says "this is the <room>" / "we're in the <kitchen>" / "das hier ist das Bad" to (re)assign the current satellite to a room. Persists the satellite->room mapping via the gatekeeper-mcp `set_room` tool, confirms, then proceeds with the original action. Voice only — irrelevant to text/chat sessions.
+name: sol-room-enrollment
+description: Use when a resident gives a room-dependent voice command (turn on the light, set the temperature here, what's the time in this room) but Solilos does not know which room the satellite is in, OR when a resident says "this is the <room>" / "we're in the <kitchen>" / "das hier ist das Bad" to (re)assign the current satellite to a room. Persists the satellite->room mapping via the gatekeeper-mcp `set_room` tool, confirms, then proceeds with the original action. Voice only — irrelevant to text/chat sessions.
 version: 1.0.0
-author: OSCAR
+author: Solilos
 license: MIT
 ---
 
-# OSCAR — Room Enrollment
+# Solilos — Room Enrollment
 
 ## Overview
 
@@ -14,10 +14,10 @@ Voice satellites (Voice-PE pucks) don't inherently know which room they're in.
 The gatekeeper tags every voice turn with the originating satellite and its
 known room, but a freshly-placed satellite has **no room** yet. When a resident
 asks for something room-dependent from such a satellite ("turn on the light"),
-OSCAR can't resolve "the light" — so it asks once, remembers the answer, and
+Solilos can't resolve "the light" — so it asks once, remembers the answer, and
 carries on.
 
-The mapping lives in `oscar.db` and is written through the **`set_room` MCP
+The mapping lives in `solilos.db` and is written through the **`set_room` MCP
 tool** exposed by the gatekeeper (the `gatekeeper-mcp` server). The agent never
 holds the gatekeeper push credential — room writes go through this tool only.
 
@@ -113,8 +113,8 @@ satellite IDs aloud, answer with the room.
 
 ## Related
 
-- `#91` / `oscar.db` `voice_pe_rooms` table — the data plane this writes to.
+- `#91` / `solilos.db` `voice_pe_rooms` table — the data plane this writes to.
 - The gatekeeper `set_room` / `list_rooms` MCP tools (`gatekeeper-mcp`) —
   the only authenticated path from Hermes to the room store.
 - Longer term the room source of truth should be Home Assistant (device→area);
-  this skill writes the interim `oscar.db` store. See `#94`.
+  this skill writes the interim `solilos.db` store. See `#94`.

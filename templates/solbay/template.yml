@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: oscar-household
+  name: solbay
   labels:
-    app: oscar-household
+    app: solbay
   annotations:
-    servicebay.label: "AI Skills (OSCAR/household)"
+    servicebay.label: "AI Skills (Solilos/household)"
     servicebay.schema-version: "1"
     # Wyoming endpoint for satellites (HA Voice PE, wyoming-satellite CLI).
     # The gatekeeper container is the only consumer that exposes a host
@@ -21,7 +21,7 @@ metadata:
     # socket accepts, the pod is at least minimally functional (init
     # container is one-shot and has already touched the SQLite schema).
     # ServiceBay's `household` stack relies on this signal to drop
-    # oscar-household from "unknown" to "ready". Without it the whole
+    # solbay from "unknown" to "ready". Without it the whole
     # household stack never reports ready=true even when everything is
     # actually running.
     servicebay.healthcheck: |
@@ -42,7 +42,7 @@ spec:
   #     <host-ip>:<GATEKEEPER_PORT>
   hostNetwork: true
   restartPolicy: Always
-  # oscar-household-init runs as a Kubernetes-style init container —
+  # schema-init runs as a Kubernetes-style init container —
   # podman supports `initContainers:` on pod specs and treats it as
   # run-to-completion before regular containers start. With the unit
   # `restartPolicy: Always` we previously declared the init in
@@ -52,27 +52,27 @@ spec:
   # Moving it to `initContainers:` runs it exactly once per pod start
   # and lets it stay `Completed` after the migrations land.
   initContainers:
-  - name: oscar-household-init
-    image: ghcr.io/mdopp/oscar-household-init:latest
+  - name: schema-init
+    image: ghcr.io/mdopp/solilos-schema-init:latest
     env:
-    - name: OSCAR_DB_URL
-      value: "sqlite:////var/lib/oscar/oscar.db"
-    - name: OSCAR_DEBUG_MODE_DEFAULT
-      value: "{{OSCAR_DEBUG_MODE}}"
+    - name: SOLILOS_DB_URL
+      value: "sqlite:////var/lib/solilos/solilos.db"
+    - name: SOLILOS_DEBUG_MODE_DEFAULT
+      value: "{{SOLILOS_DEBUG_MODE}}"
     - name: TZ
       value: "{{TZ}}"
     volumeMounts:
-    - mountPath: /var/lib/oscar
-      name: oscar-data
+    - mountPath: /var/lib/solilos
+      name: solilos-data
 
   containers:
-  # gatekeeper — OSCAR-published Wyoming-to-Hermes bridge. Phase 0/1
+  # gatekeeper — Solilos-published Wyoming-to-Hermes bridge. Phase 0/1
   #    runs pass-through with uid = DEFAULT_UID; Phase 2 reads
-  #    voice_embeddings from oscar.db and resolves uid per turn.
+  #    voice_embeddings from solilos.db and resolves uid per turn.
   - name: gatekeeper
     image: "{{GATEKEEPER_IMAGE}}"
     env:
-    - name: OSCAR_COMPONENT
+    - name: SOLILOS_COMPONENT
       value: "gatekeeper"
     - name: GATEKEEPER_URI
       value: "tcp://0.0.0.0:{{GATEKEEPER_PORT}}"
@@ -114,16 +114,16 @@ spec:
     # Empty by default; populated per household once devices are paired.
     - name: VOICE_PE_DEVICES
       value: '{{VOICE_PE_DEVICES}}'
-    # Path to oscar.db so Phase 2 speaker-ID can read voice_embeddings.
-    - name: OSCAR_DB_PATH
-      value: "/var/lib/oscar/oscar.db"
-    - name: OSCAR_DEBUG_MODE
-      value: "{{OSCAR_DEBUG_MODE}}"
+    # Path to solilos.db so Phase 2 speaker-ID can read voice_embeddings.
+    - name: SOLILOS_DB_PATH
+      value: "/var/lib/solilos/solilos.db"
+    - name: SOLILOS_DEBUG_MODE
+      value: "{{SOLILOS_DEBUG_MODE}}"
     - name: TZ
       value: "{{TZ}}"
     volumeMounts:
-    - mountPath: /var/lib/oscar
-      name: oscar-data
+    - mountPath: /var/lib/solilos
+      name: solilos-data
     # No `ports:` block — `hostNetwork: true` (set on the pod) puts the
     # gatekeeper directly on the host netns, so its listener at
     # tcp://0.0.0.0:10700 already binds host port 10700. Adding port
@@ -146,10 +146,10 @@ spec:
   #    credential ever entering a skill prompt. Talks HTTP to Audiobookshelf
   #    over host loopback; Hermes reaches this server's MCP endpoint over
   #    loopback too. post-deploy registers it only when ABS_API_KEY is set.
-  - name: oscar-abs-mcp
+  - name: solilos-abs-mcp
     image: "{{ABS_MCP_IMAGE}}"
     env:
-    - name: OSCAR_COMPONENT
+    - name: SOLILOS_COMPONENT
       value: "abs-mcp"
     - name: ABS_BASE_URL
       value: "{{ABS_BASE_URL}}"
@@ -169,15 +169,15 @@ spec:
     # the spec (same constraint as the gatekeeper above).
 
   volumes:
-  # The OSCAR data volume holds:
-  #   - oscar.db   (SQLite, populated by the init container, read by the
+  # The Solilos data volume holds:
+  #   - solilos.db   (SQLite, populated by the init container, read by the
   #                 gatekeeper for Phase 2 voice_embeddings)
   #   - skills/    (read-mounted into the Hermes container by the
   #                 ServiceBay `hermes` template via a shared hostPath;
   #                 cloned by ServiceBay's registry sync)
-  - name: oscar-data
+  - name: solilos-data
     hostPath:
-      path: {{DATA_DIR}}/oscar-household
+      path: {{DATA_DIR}}/solbay
       type: DirectoryOrCreate
 
 # Post-deploy: ./post-deploy.py

@@ -6,17 +6,17 @@
   },
   "GATEKEEPER_IMAGE": {
     "type": "text",
-    "description": "Image tag for OSCAR's gatekeeper container. Leave default unless you're running a fork PoC.",
-    "default": "ghcr.io/mdopp/oscar-gatekeeper:latest"
+    "description": "Image tag for Solilos's gatekeeper container. Leave default unless you're running a fork PoC.",
+    "default": "ghcr.io/mdopp/solilos-gatekeeper:latest"
   },
   "ABS_MCP_IMAGE": {
     "type": "text",
-    "description": "Image tag for OSCAR's read-only Audiobookshelf MCP shim (#105). Leave default unless running a fork PoC.",
-    "default": "ghcr.io/mdopp/oscar-abs-mcp:latest"
+    "description": "Image tag for Solilos's read-only Audiobookshelf MCP shim (#105). Leave default unless running a fork PoC.",
+    "default": "ghcr.io/mdopp/solilos-abs-mcp:latest"
   },
   "ABS_BASE_URL": {
     "type": "text",
-    "description": "Audiobookshelf base URL the MCP shim queries. Reached via host loopback (the media pod publishes :13378 and oscar-household is hostNetwork).",
+    "description": "Audiobookshelf base URL the MCP shim queries. Reached via host loopback (the media pod publishes :13378 and solbay is hostNetwork).",
     "default": "http://127.0.0.1:13378"
   },
   "ABS_API_KEY": {
@@ -25,7 +25,7 @@
   },
   "ABS_MCP_URL": {
     "type": "text",
-    "description": "URL of OSCAR's Audiobookshelf MCP shim (abs_search/abs_availability over streamable HTTP). The post-deploy hook registers it with Hermes when ABS_API_KEY is set. Reached via host loopback; the port matches the shim's MCP_PORT (10770).",
+    "description": "URL of Solilos's Audiobookshelf MCP shim (abs_search/abs_availability over streamable HTTP). The post-deploy hook registers it with Hermes when ABS_API_KEY is set. Reached via host loopback; the port matches the shim's MCP_PORT (10770).",
     "default": "http://127.0.0.1:10770/mcp"
   },
   "ABS_MCP_TOKEN": {
@@ -64,7 +64,7 @@
   },
   "HERMES_API_KEY": {
     "type": "secret",
-    "description": "Bearer token oscar-household and the gatekeeper present when calling Hermes. Surfaced as `__SB_CREDENTIAL__` by the ServiceBay `hermes` template's post-deploy; paste that value here (same name on both sides to avoid lookup confusion)."
+    "description": "Bearer token solbay and the gatekeeper present when calling Hermes. Surfaced as `__SB_CREDENTIAL__` by the ServiceBay `hermes` template's post-deploy; paste that value here (same name on both sides to avoid lookup confusion)."
   },
   "PUSH_TOKEN": {
     "type": "secret",
@@ -102,9 +102,9 @@
     "description": "LLDAP group whose members are considered family (versus guests). Members get personal harnesses in Phase 2; non-members get the guest harness.",
     "default": "family"
   },
-  "OSCAR_DEBUG_MODE": {
+  "SOLILOS_DEBUG_MODE": {
     "type": "select",
-    "description": "Initial debug-mode default for the `system_settings.debug_mode.active` row. `true` during build phases, flip to `false` for productive household use (controllable at runtime via the `oscar-debug-set` skill).",
+    "description": "Initial debug-mode default for the `system_settings.debug_mode.active` row. `true` during build phases, flip to `false` for productive household use (controllable at runtime via the `sol-debug-set` skill).",
     "options": ["true", "false"],
     "default": "true"
   },

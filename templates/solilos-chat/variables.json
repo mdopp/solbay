@@ -1,8 +1,8 @@
 {
   "HERMES_CHAT_IMAGE": {
     "type": "text",
-    "description": "Image tag for OSCAR's stateless chat proxy. Leave default unless you're running a fork PoC.",
-    "default": "ghcr.io/mdopp/oscar-chat:latest"
+    "description": "Image tag for Solilos's stateless chat proxy. Leave default unless you're running a fork PoC.",
+    "default": "ghcr.io/mdopp/solilos-chat:latest"
   },
   "HERMES_CHAT_PORT": {
     "type": "text",

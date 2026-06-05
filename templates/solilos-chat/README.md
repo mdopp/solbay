@@ -1,8 +1,8 @@
-# hermes-chat
+# solilos-chat
 
 A small, **stateless, offline-capable** household chat surface at
 `chat.<publicDomain>`. Serves a static chat page from a tiny own image
-(`ghcr.io/mdopp/oscar-chat`) and forwards turns to Hermes' **native session
+(`ghcr.io/mdopp/solilos-chat`) and forwards turns to Hermes' **native session
 API**. Replaces the fragile in-process `hermes-webui` (#139, #140).
 
 The proxy source lives in `hermes-chat/` at the repo root (the image
@@ -42,7 +42,7 @@ data, so every message errored with `AIAgent not available`, and the
 
 | Variable | Type | Purpose |
 |---|---|---|
-| `HERMES_CHAT_IMAGE` | text | Image tag (default `ghcr.io/mdopp/oscar-chat:latest`). |
+| `HERMES_CHAT_IMAGE` | text | Image tag (default `ghcr.io/mdopp/solilos-chat:latest`). |
 | `HERMES_CHAT_PORT` | text | Host loopback port (default 8787). |
 | `HERMES_CHAT_SUBDOMAIN` | subdomain | `chat` by default. Internal exposure via NPM + Authelia. |
 | `HERMES_API_PORT` | text | Hermes native API port (default 8642). |
@@ -67,5 +67,5 @@ any data dir under `${DATA_DIR}/_archived/`, and drops it from
 ## Out of scope
 
 - Session-list / new-session UI (#141) — this is one current session.
-- The SolBay rename (#138) — naming stays on the current OSCAR scheme
-  (`oscar-chat` image, `hermes-chat` template).
+- The SolBay rename (#138) is applied: `solilos-chat` image and
+  `solilos-chat` template; the proxy source dir stays `hermes-chat/`.

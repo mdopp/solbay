@@ -71,7 +71,7 @@ Hermes' generated `config.yaml` writes a single `model:` block, so
 every turn — text-only or image-bearing — goes through the same
 model tag (`OLLAMA_DEFAULT_MODEL`, shared with the `ollama`
 template). The default `gemma4:e4b` is natively multimodal, so
-OSCAR's `media-ingestion-multimodal` skill (book covers, document
+Solilos's `media-ingestion-multimodal` skill (book covers, document
 photos) OCRs images out of the box.
 
 If you switch `OLLAMA_DEFAULT_MODEL` to a text-only tag, image-bearing
@@ -95,7 +95,7 @@ new servers from a script:
    block this template wrote), splice in an `mcp_servers:` section,
    write back, and trigger a pod restart via
    `POST /api/services/hermes/action {action: "restart"}`. That's
-   the path OSCAR's `oscar-household` template takes.
+   the path Solilos's `solbay` template takes.
 2. **Hand-edit and reload.** `hermes config edit`, add the
    `mcp_servers:` block, then send `/reload-mcp` in any active
    gateway session. Interactive — fine for one-off changes from a

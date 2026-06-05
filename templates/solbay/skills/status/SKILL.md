@@ -1,24 +1,24 @@
 ---
-name: oscar-status
-description: Use when the user asks "is OSCAR alive?", "is everything working?", "why isn't the light responding?", or any other "health-check" style question. Probes the configured OSCAR dependencies (oscar.db, Ollama, Hermes, Home Assistant, ServiceBay-MCP) and reports per-component status. Read-only.
+name: sol-status
+description: Use when the user asks "is Solilos alive?", "is everything working?", "why isn't the light responding?", or any other "health-check" style question. Probes the configured Solilos dependencies (solilos.db, Ollama, Hermes, Home Assistant, ServiceBay-MCP) and reports per-component status. Read-only.
 version: 0.3.0
-author: OSCAR
+author: Solilos
 license: MIT
 ---
 
-# OSCAR — status
+# Solilos — status
 
 ## Overview
 
-Quick "is everything OK?" probe across every OSCAR dependency. Read-only — no state changes.
+Quick "is everything OK?" probe across every Solilos dependency. Read-only — no state changes.
 
 ## When to use
 
-- "OSCAR, bist du da?" / "Bist du wach?"
+- "Solilos, bist du da?" / "Bist du wach?"
 - "Funktioniert alles?" / "Geht das Licht gerade nicht?"
 - "Ist Home Assistant erreichbar?"
 - "Wo hakt's gerade?"
-- As the **first** diagnostic step before deeper drill-down — if `oscar-status` says everything's green, the bug is application-side, not infrastructure.
+- As the **first** diagnostic step before deeper drill-down — if `sol-status` says everything's green, the bug is application-side, not infrastructure.
 
 ## Operating sequence
 
@@ -31,7 +31,7 @@ Quick "is everything OK?" probe across every OSCAR dependency. Read-only — no 
        {"name": "ollama", "ok": true, "latency_ms": 8, "type": "http"},
        {"name": "hermes-api", "ok": true, "latency_ms": 12, "type": "http"},
        {"name": "home-assistant", "ok": false, "latency_ms": 3000, "type": "http", "detail": "ConnectError: ..."},
-       {"name": "oscar.db", "ok": true, "latency_ms": 1, "type": "script"}
+       {"name": "solilos.db", "ok": true, "latency_ms": 1, "type": "script"}
      ]
    }
    ```
@@ -43,11 +43,11 @@ Quick "is everything OK?" probe across every OSCAR dependency. Read-only — no 
 
 ## What gets probed
 
-This skill **does not** define what gets probed. The set of health checks is **declared at deploy time** by each template's `post-deploy.py` via `create_health_check` against ServiceBay-MCP. `oscar-household` registers:
+This skill **does not** define what gets probed. The set of health checks is **declared at deploy time** by each template's `post-deploy.py` via `create_health_check` against ServiceBay-MCP. `solbay` registers:
 
 | Check | Type | Purpose |
 |---|---|---|
-| `oscar.db` | `script` | SQLite open + `SELECT 1` on `cloud_audit` — OSCAR's audit state readable |
+| `solilos.db` | `script` | SQLite open + `SELECT 1` on `cloud_audit` — Solilos's audit state readable |
 | `hermes-api` | `http` | Hermes' `/health` endpoint reachable with the token |
 | `ollama` | `http` | Local LLM responding to `/api/tags` |
 | `home-assistant` | `http` | Home Assistant reachable (Hermes native HA gateway target) |
@@ -60,8 +60,8 @@ ServiceBay's existing templates (`home-assistant`, `media`, …) register their 
 
 ## What this does NOT cover
 
-- **Skill correctness** — we know Hermes is reachable, not that a specific skill behaves. For that, `oscar-audit-query` over `cloud_audit` and the relevant SKILL events.
-- **Voice latency** — `podman`/`http` checks say the service is up, not that it's fast. For latency hunting, `oscar-debug-set` + the gatekeeper's `gatekeeper.transcript` / `gatekeeper.response` timestamps.
+- **Skill correctness** — we know Hermes is reachable, not that a specific skill behaves. For that, `sol-audit-query` over `cloud_audit` and the relevant SKILL events.
+- **Voice latency** — `podman`/`http` checks say the service is up, not that it's fast. For latency hunting, `sol-debug-set` + the gatekeeper's `gatekeeper.transcript` / `gatekeeper.response` timestamps.
 - **HA device state** — "is the office light actually on?" is a Hermes HA-tool query, not a status probe.
 
 ## Failure paths
@@ -70,9 +70,9 @@ ServiceBay's existing templates (`home-assistant`, `media`, …) register their 
 
 ## Phase mapping
 
-| Phase | Checks registered by oscar-household's post-deploy |
+| Phase | Checks registered by solbay's post-deploy |
 |---|---|
-| **0 (now)** | oscar.db, hermes-api, ollama, home-assistant, servicebay-mcp |
+| **0 (now)** | solilos.db, hermes-api, ollama, home-assistant, servicebay-mcp |
 | **1** | + gatekeeper, voice-whisper, voice-piper |
 | **2** | + gatekeeper-speaker-id (model loaded? embeddings table populated?) |
 | **3a** | + ingestion-pipeline backlog (rows in incoming state) |

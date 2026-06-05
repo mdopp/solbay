@@ -2,11 +2,11 @@
 name: media-ingestion-multimodal
 description: Triggers automatically when a resident uploads an image or photo attachment (such as a book cover, physical document, receipt, or music album art) via Signal, Telegram, Discord, or any other messaging gateway, or explicitly asks to ingest or scan a photographed item. Extracts structured metadata (ISBN, Title, Author, Artist, Tracklist, or Document Summary) and full OCR transcripts using multimodal LLMs. Writes the formatted, Obsidian-compatible structured Markdown note directly into the '/opt/data/notes/' folder (which is synced via Syncthing) so that the native 'qmd' skill can automatically index and retrieve it.
 version: 1.3.0
-author: OSCAR
+author: Solilos
 license: MIT
 ---
 
-# OSCAR — Multimodal Ingestion Pipeline
+# Solilos — Multimodal Ingestion Pipeline
 
 ## Overview
 
@@ -20,7 +20,7 @@ No custom database migrations or schema alterations required.
 
 - When a resident sends an image attachment of a **book cover**, **music album cover**, or **physical document page** via Signal, Telegram, or Discord.
 - When a user explicitly says:
-  - "OSCAR, process this book picture."
+  - "Solilos, process this book picture."
   - "Nimm dieses Dokument in mein Gedächtnis auf."
   - "Füge dieses Album meiner Sammlung hinzu."
   - "Hier ist ein Foto von der Quittung."
@@ -52,7 +52,7 @@ Do **not** trigger on plain text messages that do not contain an image attachmen
 - Structure the resulting note as a standardized Markdown file.
 - **YAML Frontmatter**:
   - `type`: `book`, `album`, `document`, or `receipt`
-  - `tags`: `#oscar/ingested` combined with `#type/book`, `#type/album`, `#type/document`, or `#type/receipt`
+  - `tags`: `#solilos/ingested` combined with `#type/book`, `#type/album`, `#type/document`, or `#type/receipt`
   - `added_by`: the current resident `uid` (default `guest` if unresolved)
   - `added_at`: current ISO-8601 timestamp
   - `isbn` / `artist` / `document_date` (specific extracted fields)
@@ -119,7 +119,7 @@ lets backlinks accumulate on that entity over time.
 ---
 type: <author|artist|genre>
 tags:
-  - oscar/stub
+  - solilos/stub
   - type/<author|artist|genre>
 created_at: {{timestamp}}
 ---
@@ -183,7 +183,7 @@ resident in the confirmation. **Skip this for `document` and `receipt`** items.
 ---
 type: book
 tags:
-  - oscar/ingested
+  - solilos/ingested
   - type/book
 added_by: {{uid}}
 added_at: {{timestamp}}
@@ -219,7 +219,7 @@ year: {{year}}
 ---
 type: album
 tags:
-  - oscar/ingested
+  - solilos/ingested
   - type/album
 added_by: {{uid}}
 added_at: {{timestamp}}
@@ -253,7 +253,7 @@ genre: "{{genre}}"
 ---
 type: {{doc_type}}
 tags:
-  - oscar/ingested
+  - solilos/ingested
   - type/{{doc_type}}
 added_by: {{uid}}
 added_at: {{timestamp}}

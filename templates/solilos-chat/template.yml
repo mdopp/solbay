@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: hermes-chat
+  name: solilos-chat
   labels:
-    app: hermes-chat
+    app: solilos-chat
   annotations:
     servicebay.label: "Chat"
     servicebay.schema-version: "1"
@@ -33,10 +33,10 @@ spec:
   hostNetwork: true
   restartPolicy: Always
   containers:
-  - name: hermes-chat
+  - name: solilos-chat
     image: "{{HERMES_CHAT_IMAGE}}"
     env:
-    - name: OSCAR_COMPONENT
+    - name: SOLILOS_COMPONENT
       value: "chat"
     # Bind loopback only — a 0.0.0.0 bind under hostNetwork would put the
     # chat surface on the LAN, bypassing Authelia. Only NPM reaches it.

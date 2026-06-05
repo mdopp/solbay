@@ -1,12 +1,12 @@
 ---
-name: oscar-daily-chronicle
-description: Use when a resident asks OSCAR to write, compile, or update the family journal / household chronicle / diary for a day (e.g. "schreib die Familienchronik für heute", "write today's journal", "Tagebuch-Eintrag für heute"), and as the daily 23:59 cron job that writes the day's entry unattended. Compiles the day's highlights into a standardized Obsidian-compatible Markdown file under /opt/data/notes/journal/.
+name: sol-daily-chronicle
+description: Use when a resident asks Solilos to write, compile, or update the family journal / household chronicle / diary for a day (e.g. "schreib die Familienchronik für heute", "write today's journal", "Tagebuch-Eintrag für heute"), and as the daily 23:59 cron job that writes the day's entry unattended. Compiles the day's highlights into a standardized Obsidian-compatible Markdown file under /opt/data/notes/journal/.
 version: 1.2.0
-author: OSCAR
+author: Solilos
 license: MIT
 ---
 
-# OSCAR — Family Chronicle (Daily Journal)
+# Solilos — Family Chronicle (Daily Journal)
 
 ## Overview
 
@@ -18,7 +18,7 @@ resident's phone.
 
 **Two ways this runs:**
 - **On request** — a resident explicitly asks for the entry (interactive).
-- **Unattended daily cron** — `oscar-household`'s post-deploy registers a
+- **Unattended daily cron** — `solbay`'s post-deploy registers a
   Hermes job (`59 23 * * *`) that fires this skill at 23:59 with no resident
   present. In that mode you must **not** ask anyone for input (see step 2).
 
@@ -31,12 +31,12 @@ deferred slice of #83 — do not assume it exists.
 
 - A resident asks to create or update the household journal / chronicle /
   diary for a day:
-  - "OSCAR, schreib die Familienchronik für heute."
+  - "Solilos, schreib die Familienchronik für heute."
   - "Write today's journal."
   - "Mach einen Tagebuch-Eintrag für heute / für den 27.05."
 - When the daily cron job fires this skill at 23:59 (unattended).
 - Do **not** trigger on a request to write a *general* note or fact — that is
-  the `media-ingestion-multimodal` / `oscar-dynamic-skills` path. This skill is
+  the `media-ingestion-multimodal` / `sol-dynamic-skills` path. This skill is
   only for the dated journal/chronicle entry.
 
 ---
@@ -67,7 +67,7 @@ Compile from the sources you actually have — do **not** fabricate events:
 > - Summarise at the **household/family group** level. Do **not** attribute a
 >   highlight to a named individual, and do **not** quote or paraphrase any one
 >   resident's private conversation.
-> - A thing a single resident told OSCAR in private goes in the journal **only**
+> - A thing a single resident told Solilos in private goes in the journal **only**
 >   if it's a genuinely household-relevant fact (e.g. "the garden was watered"),
 >   stated as a group fact — never as "X said …" or "X is …".
 > - When in doubt, leave it out. A thinner honest entry beats leaking one
@@ -108,7 +108,7 @@ household.
 ---
 type: journal
 tags:
-  - oscar/journal
+  - solilos/journal
   - date/{{date}}
 created_at: {{timestamp}}
 ---
@@ -142,7 +142,7 @@ created_at: {{timestamp}}
 - **No fabrication**: an empty day gets a short, honest entry — not invented
   events.
 - **Don't self-schedule, don't restart services**: the daily cron is
-  registered once by `oscar-household`'s post-deploy. This skill never creates
+  registered once by `solbay`'s post-deploy. This skill never creates
   or edits its own cron job, and never calls `restart_service`.
 - **Privacy**: group-level aggregated highlights only — never attribute to a
   named resident, never copy a private conversation verbatim (see step 2).
@@ -159,6 +159,6 @@ created_at: {{timestamp}}
    *merged*, not overwritten.
 4. Ask Hermes to recall the day's journal and confirm `qmd` retrieves it.
 5. Confirm the daily cron is registered: `hermes cron list` (or
-   `GET /api/jobs`) shows `oscar-daily-chronicle` at `59 23 * * *`. Force a
-   run with `hermes cron run oscar-daily-chronicle` and confirm it writes the
+   `GET /api/jobs`) shows `sol-daily-chronicle` at `59 23 * * *`. Force a
+   run with `hermes cron run sol-daily-chronicle` and confirm it writes the
    entry unattended (no prompt for resident input).

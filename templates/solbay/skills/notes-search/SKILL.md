@@ -1,20 +1,20 @@
 ---
-name: oscar-notes-search
-description: Use when a resident asks OSCAR to find, search, recall, or look something up in the household notes / knowledge base / Obsidian vault (e.g. "what did we note about the garden?", "find the book I added about X", "wo hab ich das mit dem WLAN-Passwort notiert?", "such in meinen Notizen nach …"). Retrieves matching notes from the Syncthing-synced vault under /opt/data/notes and feeds them back into the answer. Read-only.
+name: sol-notes-search
+description: Use when a resident asks Solilos to find, search, recall, or look something up in the household notes / knowledge base / Obsidian vault (e.g. "what did we note about the garden?", "find the book I added about X", "wo hab ich das mit dem WLAN-Passwort notiert?", "such in meinen Notizen nach …"). Retrieves matching notes from the Syncthing-synced vault under /opt/data/notes and feeds them back into the answer. Read-only.
 version: 1.0.0
-author: OSCAR
+author: Solilos
 license: MIT
 ---
 
-# OSCAR — Notes Search (knowledge-base retrieval)
+# Solilos — Notes Search (knowledge-base retrieval)
 
 ## Overview
 
 On-demand retrieval over the household's Obsidian notes vault
-(`/opt/data/notes`, Syncthing-synced). This is the **read half** of OSCAR's
+(`/opt/data/notes`, Syncthing-synced). This is the **read half** of Solilos's
 knowledge base — the write half is `media-ingestion-multimodal` (book/album/
-document notes), `oscar-dynamic-skills` (facts in `SOUL.md` / `fact_*.md`), and
-`oscar-daily-chronicle` (journal). This skill lets the agent *find* and cite
+document notes), `sol-dynamic-skills` (facts in `SOUL.md` / `fact_*.md`), and
+`sol-daily-chronicle` (journal). This skill lets the agent *find* and cite
 what was written.
 
 Retrieval is **keyword + frontmatter** search via `ripgrep` over the markdown —
@@ -33,8 +33,8 @@ not part of this skill.
   notes might already answer — check the vault before saying "I don't know".
 
 Out of scope:
-- Writing/updating notes → `oscar-dynamic-skills` / `media-ingestion-multimodal`.
-- The dated journal → `oscar-daily-chronicle`.
+- Writing/updating notes → `sol-dynamic-skills` / `media-ingestion-multimodal`.
+- The dated journal → `sol-daily-chronicle`.
 - Conversation history → that's Hermes' memory provider, not the notes vault.
 
 ## Operating sequence
@@ -80,8 +80,8 @@ Out of scope:
 
 ## Related
 
-- Write paths: `media-ingestion-multimodal`, `oscar-dynamic-skills`,
-  `oscar-daily-chronicle`.
+- Write paths: `media-ingestion-multimodal`, `sol-dynamic-skills`,
+  `sol-daily-chronicle`.
 - Semantic upgrade: Hermes' native `qmd` skill (hybrid BM25 + vector + rerank)
   — needs the `@tobilu/qmd` engine + models installed in the Hermes image and
   the optional skill enabled; out of scope for this keyword retriever.

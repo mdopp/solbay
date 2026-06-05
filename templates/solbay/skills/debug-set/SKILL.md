@@ -1,18 +1,18 @@
 ---
-name: oscar-debug-set
-description: Use when an admin asks to turn debug-mode on or off, or to enable verbose logging for a bounded window. Writes `system_settings.debug_mode` in oscar.db. Components that re-query the row on every audit event pick the change up within ~5 seconds. Admin-only — never invoke without explicit admin authorization.
+name: sol-debug-set
+description: Use when an admin asks to turn debug-mode on or off, or to enable verbose logging for a bounded window. Writes `system_settings.debug_mode` in solilos.db. Components that re-query the row on every audit event pick the change up within ~5 seconds. Admin-only — never invoke without explicit admin authorization.
 version: 0.3.0
-author: OSCAR
+author: Solilos
 license: MIT
 ---
 
-# OSCAR — debug.set
+# Solilos — debug.set
 
 ## Overview
 
-Cluster-wide debug-mode toggle. When on, OSCAR-owned containers log full prompts / responses / tool args / connector bodies; audit-table retention policies are suspended; cloud-LLM-fulltext fields are returned by `audit-query` instead of redacted.
+Cluster-wide debug-mode toggle. When on, Solilos-owned containers log full prompts / responses / tool args / connector bodies; audit-table retention policies are suspended; cloud-LLM-fulltext fields are returned by `audit-query` instead of redacted.
 
-Source of truth is the `debug_mode` row in `system_settings` in `oscar.db` (the SQLite file in `oscar-household`'s volume, default `/var/lib/oscar/oscar.db`). This skill rewrites that row; components re-query `system_settings` on every audit event (no caching > 5 s), so the change propagates within ~5 seconds without restarts.
+Source of truth is the `debug_mode` row in `system_settings` in `solilos.db` (the SQLite file in `solbay`'s volume, default `/var/lib/solilos/solilos.db`). This skill rewrites that row; components re-query `system_settings` on every audit event (no caching > 5 s), so the change propagates within ~5 seconds without restarts.
 
 ## When to use
 
@@ -51,21 +51,21 @@ effective_active = value.active AND (value.verbose_until IS NULL OR now() < valu
 
 ## Privacy reminder
 
-When the user asks to turn debug-mode on, OSCAR will start writing full conversation content (prompts and responses) to `cloud_audit` and to stdout-JSON. Mention this briefly the first time in a session — "Debug-Mode loggt jetzt auch Volltexte." — so the household isn't surprised.
+When the user asks to turn debug-mode on, Solilos will start writing full conversation content (prompts and responses) to `cloud_audit` and to stdout-JSON. Mention this briefly the first time in a session — "Debug-Mode loggt jetzt auch Volltexte." — so the household isn't surprised.
 
 ## Failure paths
 
-- `oscar.db` unreachable → "Ich kann debug-mode gerade nicht ändern." Don't retry in a loop.
+- `solilos.db` unreachable → "Ich kann debug-mode gerade nicht ändern." Don't retry in a loop.
 - Past `verbose_until` value (in the past) → reject as nonsense, ask back.
 
 ## Phase mapping
 
 | Phase | Behaviour |
 |---|---|
-| **0 (now)** | Writes `system_settings.debug_mode` row in `oscar.db`. Components re-query on every audit event (no caching > 5 s). |
+| **0 (now)** | Writes `system_settings.debug_mode` row in `solilos.db`. Components re-query on every audit event (no caching > 5 s). |
 | **1+** | Voice components (gatekeeper) honour `latency_annotations` in synthesised responses. |
 
 ## Related
 
-- `oscar-audit-query` to inspect what happened while debug-mode was on.
-- Architecture spec for debug-mode semantics: [`../../oscar-architecture.md`](../../oscar-architecture.md) → "Cross-cutting: Debug mode".
+- `sol-audit-query` to inspect what happened while debug-mode was on.
+- Architecture spec for debug-mode semantics: [`../../solilos-architecture.md`](../../solilos-architecture.md) → "Cross-cutting: Debug mode".

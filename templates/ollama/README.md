@@ -15,7 +15,7 @@ networking.
   points at after install. Default `gemma4:e4b` — 8B params @ Q4_K_M,
   ~10 GB on disk, fits 100% on a 16 GB GPU, AND ships native multimodal
   (`ollama show gemma4:e4b` reports `completion, vision, audio, tools,
-  thinking`). That single default backs OSCAR's multimodal-ingestion
+  thinking`). That single default backs Solilos's multimodal-ingestion
   path without a separate vision pull. Any Ollama library tag works,
   plus user-namespaced tags like `VladimirGav/gemma4-26b-16GB-VRAM:latest`.
 - `OLLAMA_EXTRA_MODELS` — comma-separated list of additional models
@@ -33,7 +33,7 @@ networking.
 - `OLLAMA_VISION_MODEL` — historical, mostly unused now that the
   default `gemma4:e4b` ships vision + audio natively. Set this only if
   you've changed `OLLAMA_DEFAULT_MODEL` to a text-only tag and still
-  want a vision backend for OSCAR's `media-ingestion-multimodal` skill.
+  want a vision backend for Solilos's `media-ingestion-multimodal` skill.
   Suggested non-default tags: `qwen2.5vl:7b`, `llava:13b`, `bakllava:7b`.
 - `OLLAMA_CONTEXT_LENGTH` — Ollama's default load context window, in
   tokens. Default `131072` (gemma4:e4b's full native context, ~6.5 GB
@@ -98,7 +98,7 @@ cached and skips the pulls.
 
 The default `OLLAMA_DEFAULT_MODEL=gemma4:e4b` is natively multimodal —
 `ollama show gemma4:e4b` reports `completion, vision, audio, tools,
-thinking`. OSCAR's `media-ingestion-multimodal` skill calls into it
+thinking`. Solilos's `media-ingestion-multimodal` skill calls into it
 without a separate vision pull.
 
 Where the tag matters: the `OLLAMA_EXTRA_MODELS` default ships

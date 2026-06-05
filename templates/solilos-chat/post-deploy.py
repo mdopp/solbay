@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""post-deploy hook for the `hermes-chat` template.
+"""post-deploy hook for the `solilos-chat` template.
 
-Decommission the chat pods this one replaces. `hermes-chat` (#140) takes
+Decommission the chat pods this one replaces. `solilos-chat` (#140) takes
 over `chat.<publicDomain>` from the in-process `hermes-webui` (#139), which
 itself replaced `open-webui` (#1044). Removing a template directory in
 source doesn't remove an already-installed pod from a box, so we tear down
@@ -17,7 +17,7 @@ neither and no-ops):
   - Drop it from `installedTemplates` so `/services` stops rendering a row
     for a template that no longer exists.
 
-We don't re-target the NPM proxy here: hermes-chat's wizard-side subdomain
+We don't re-target the NPM proxy here: solilos-chat's wizard-side subdomain
 registration claims `chat.<publicDomain>` via the same upsert the
 predecessors used.
 """
@@ -83,7 +83,7 @@ def http_request(
         except Exception:  # pylint: disable=broad-except
             return e.code, None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
-        jlog("warn", "hermes-chat:decom", "HTTP error", url=url, error=str(e))
+        jlog("warn", "solilos-chat:decom", "HTTP error", url=url, error=str(e))
         return 0, None
 
 
@@ -108,13 +108,13 @@ def archive_data_dir(data_dir: str, name: str) -> str | None:
     except OSError as e:
         jlog(
             "warn",
-            "hermes-chat:decom",
+            "solilos-chat:decom",
             "could not archive data dir; left in place for manual cleanup",
             src=src,
             error=str(e),
         )
         return None
-    jlog("info", "hermes-chat:decom", "archived data dir", src=src, dst=dst)
+    jlog("info", "solilos-chat:decom", "archived data dir", src=src, dst=dst)
     return dst
 
 
@@ -125,11 +125,11 @@ def delete_service(sb_api: str, name: str) -> bool:
         timeout=30,
     )
     if status == 200:
-        jlog("info", "hermes-chat:decom", "deleted service via SB API", service=name)
+        jlog("info", "solilos-chat:decom", "deleted service via SB API", service=name)
         return True
     jlog(
         "warn",
-        "hermes-chat:decom",
+        "solilos-chat:decom",
         "could not delete service via SB API — operator may need to remove the pod manually",
         service=name,
         status=status,
@@ -153,14 +153,14 @@ def remove_from_installed_templates(
     if status == 200:
         jlog(
             "info",
-            "hermes-chat:decom",
+            "solilos-chat:decom",
             "removed retired templates from installedTemplates",
             removed=to_prune,
         )
         return
     jlog(
         "warn",
-        "hermes-chat:decom",
+        "solilos-chat:decom",
         "could not update installedTemplates — SB will keep showing them as installed until the next config edit",
         status=status,
     )
@@ -171,7 +171,7 @@ def decommission(sb_api: str, data_dir: str) -> None:
     if installed is None:
         jlog(
             "warn",
-            "hermes-chat:decom",
+            "solilos-chat:decom",
             "could not read installedTemplates; skipping decommission check",
         )
         return
@@ -180,7 +180,7 @@ def decommission(sb_api: str, data_dir: str) -> None:
         return  # Fresh install or already-decommissioned — no-op
     jlog(
         "info",
-        "hermes-chat:decom",
+        "solilos-chat:decom",
         "retired chat pods detected — beginning decommission for #139/#140",
         present=present,
     )
@@ -188,7 +188,7 @@ def decommission(sb_api: str, data_dir: str) -> None:
         archive_data_dir(data_dir, name)
         delete_service(sb_api, name)
     remove_from_installed_templates(sb_api, installed, present)
-    jlog("info", "hermes-chat:decom", "decommission complete", removed=present)
+    jlog("info", "solilos-chat:decom", "decommission complete", removed=present)
 
 
 def main() -> int:

@@ -1,12 +1,12 @@
-"""OSCAR Hermes plugin entrypoint.
+"""Solilos Hermes plugin entrypoint.
 
-Registers the bundled skills (templates/oscar-household/skills/) with
-Hermes when this repo is cloned into ~/.hermes/plugins/oscar/ via
+Registers the bundled skills (templates/solbay/skills/) with
+Hermes when this repo is cloned into ~/.hermes/plugins/solbay/ via
 Hermes' "Install from URL" flow.
 
-NOT used when OSCAR is deployed via ServiceBay (mdopp/oscar registry).
-In that case the oscar-household template's post-deploy.py copies the
-skills into Hermes' bind-mount target at /opt/data/skills/oscar/, and
+NOT used when Solilos is deployed via ServiceBay (mdopp/solbay registry).
+In that case the solbay template's post-deploy.py copies the
+skills into Hermes' bind-mount target at /opt/data/skills/solilos/, and
 Hermes' built-in skill loader picks them up from the filesystem.
 
 Hermes plugin contract:
@@ -17,15 +17,15 @@ from __future__ import annotations
 from pathlib import Path
 
 
-_SKILLS_ROOT = Path(__file__).parent / "templates" / "oscar-household" / "skills"
-_HERMES_BINDMOUNT = Path("/opt/data/skills/oscar")
+_SKILLS_ROOT = Path(__file__).parent / "templates" / "solbay" / "skills"
+_HERMES_BINDMOUNT = Path("/opt/data/skills/solilos")
 
 
 def _already_loaded_via_bindmount() -> bool:
     """Detect the ServiceBay-managed deployment case so we don't double-
-    register the same skills. If Hermes is running inside the OSCAR pod
+    register the same skills. If Hermes is running inside the Solilos pod
     with the SB-managed bind-mount in place, the skill files are
-    already discoverable at /opt/data/skills/oscar/ — no need (and a
+    already discoverable at /opt/data/skills/solilos/ — no need (and a
     potential conflict) to also register them from this plugin path.
     """
     if not _HERMES_BINDMOUNT.is_dir():
@@ -39,7 +39,7 @@ def _already_loaded_via_bindmount() -> bool:
 def on_load(ctx):
     """Called by Hermes when the plugin is loaded.
 
-    Walks templates/oscar-household/skills/ and registers each
+    Walks templates/solbay/skills/ and registers each
     `SKILL.md` via ctx.register_skill(name, path). Skill names are the
     immediate-subdirectory names (audit-query, debug-set, …).
     """

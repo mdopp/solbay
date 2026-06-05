@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Post-deploy hook for oscar-household.
+"""Post-deploy hook for solbay.
 
 Runs on the host (non-interactive) after the pod's containers report
 Ready. Idempotent on every invocation.
@@ -54,7 +54,7 @@ Caveat
 
 If ServiceBay's `hermes` template is re-deployed, its post-deploy
 overwrites config.yaml with just the model block — losing our
-mcp_servers block. Re-deploy `oscar-household` to restore it.
+mcp_servers block. Re-deploy `solbay` to restore it.
 
 Variables (ServiceBay substitutes them)
 =======================================
@@ -278,7 +278,7 @@ def _mint_servicebay_mcp_token_once() -> str | None:
         # `read` is enough for the audit-query / status skills (they
         # read logs + service health); `mutate` and `lifecycle` cover
         # the future MCP-driven self-heal flows in the household stack.
-        {"name": "oscar-hermes", "scopes": ["read", "mutate", "lifecycle"]},
+        {"name": "solbay-hermes", "scopes": ["read", "mutate", "lifecycle"]},
         timeout=15,
     )
     if status != 200 or not isinstance(body, dict):
@@ -308,7 +308,7 @@ def mint_servicebay_mcp_token(attempts: int = 4, backoff_s: float = 3.0) -> str 
         if secret:
             jlog(
                 "info",
-                "oscar-household:mcp",
+                "solbay:mcp",
                 "minted servicebay-mcp token",
                 attempt=attempt,
             )
@@ -317,7 +317,7 @@ def mint_servicebay_mcp_token(attempts: int = 4, backoff_s: float = 3.0) -> str 
             time.sleep(backoff_s)
     jlog(
         "warn",
-        "oscar-household:mcp",
+        "solbay:mcp",
         "could not mint servicebay-mcp token after retries; skipping servicebay-mcp entry (a missing entry is more diagnosable than a silently-401 one)",
         attempts=attempts,
     )
@@ -338,7 +338,7 @@ def probe_servicebay_mcp_token(token: str) -> bool:
         "params": {
             "protocolVersion": "2025-03-26",
             "capabilities": {},
-            "clientInfo": {"name": "oscar-household-post-deploy", "version": "1"},
+            "clientInfo": {"name": "solbay-post-deploy", "version": "1"},
         },
     }
     req = urllib.request.Request(
@@ -379,7 +379,7 @@ def read_config_via_container() -> str | None:
     except (OSError, subprocess.SubprocessError) as e:
         jlog(
             "warn",
-            "oscar-household:config",
+            "solbay:config",
             "could not exec into hermes container to read config.yaml",
             container=HERMES_CONTAINER,
             error=str(e),
@@ -388,7 +388,7 @@ def read_config_via_container() -> str | None:
     if proc.returncode != 0:
         jlog(
             "warn",
-            "oscar-household:config",
+            "solbay:config",
             "config.yaml not found",
             path=f"{HERMES_CONTAINER}:{CONTAINER_CONFIG_PATH}",
             stderr=proc.stderr.strip(),
@@ -421,7 +421,7 @@ def write_config_via_container(content: str) -> bool:
     except (OSError, subprocess.SubprocessError) as e:
         jlog(
             "error",
-            "oscar-household:config",
+            "solbay:config",
             "could not exec into hermes container to write config.yaml",
             container=HERMES_CONTAINER,
             error=str(e),
@@ -430,7 +430,7 @@ def write_config_via_container(content: str) -> bool:
     if proc.returncode != 0:
         jlog(
             "error",
-            "oscar-household:config",
+            "solbay:config",
             "writing config.yaml in hermes container failed",
             container=HERMES_CONTAINER,
             stderr=proc.stderr.strip(),
@@ -544,7 +544,7 @@ def merge_config_yaml(servers: list[tuple[str, str, str]]) -> bool:
         return False
     jlog(
         "info",
-        "oscar-household:config",
+        "solbay:config",
         "config.yaml mcp_servers block updated",
         path=f"{HERMES_CONTAINER}:{CONTAINER_CONFIG_PATH}",
         mcp_servers=[name for name, _, _ in servers],
@@ -565,13 +565,13 @@ def wait_for_hermes() -> None:
         # if our token is wrong, but the post-deploy will surface that
         # via the restart-API call instead).
         if status in (200, 401, 403):
-            jlog("info", "oscar-household:hermes", "ready", status=status)
+            jlog("info", "solbay:hermes", "ready", status=status)
             return
         last_status = status
         time.sleep(2)
     jlog(
         "error",
-        "oscar-household:hermes",
+        "solbay:hermes",
         "not reachable within readiness window",
         last_status=last_status,
         timeout_s=READINESS_TIMEOUT_S,
@@ -584,13 +584,13 @@ def restart_hermes_via_sb_api() -> bool:
     if status == 200:
         jlog(
             "info",
-            "oscar-household:restart",
+            "solbay:restart",
             "hermes restart requested via ServiceBay API",
         )
         return True
     jlog(
         "warn",
-        "oscar-household:restart",
+        "solbay:restart",
         "restart request failed; new mcp_servers block lands on next manual restart",
         status=status,
     )
@@ -600,10 +600,10 @@ def restart_hermes_via_sb_api() -> bool:
 def _ha_long_lived_token() -> str | None:
     """When `home-assistant`'s post-deploy auto-onboarded HA (#934), it
     leaves a long-lived access token at
-    `<DATA_DIR>/home-assistant/homeassistant/.oscar-long-lived-token`.
+    `<DATA_DIR>/home-assistant/homeassistant/.solilos-long-lived-token`.
     Prefer that over HA_MCP_TOKEN from assemble (random placeholder)."""
     path = os.path.join(
-        DATA_DIR, "home-assistant", "homeassistant", ".oscar-long-lived-token"
+        DATA_DIR, "home-assistant", "homeassistant", ".solilos-long-lived-token"
     )
     if not os.path.exists(path):
         return None
@@ -629,14 +629,14 @@ def collect_mcp_servers() -> list[tuple[str, str, str]]:
         else:
             jlog(
                 "info",
-                "oscar-household:mcp",
+                "solbay:mcp",
                 "ha-mcp skipped",
                 reason="no token (neither file nor env)",
             )
     else:
         jlog(
             "info",
-            "oscar-household:mcp",
+            "solbay:mcp",
             "ha-mcp skipped",
             reason="missing url",
         )
@@ -652,7 +652,7 @@ def collect_mcp_servers() -> list[tuple[str, str, str]]:
         if current and probe_servicebay_mcp_token(current):
             jlog(
                 "info",
-                "oscar-household:mcp",
+                "solbay:mcp",
                 "servicebay-mcp token still valid; keeping existing",
             )
             servers.append(("servicebay-mcp", SERVICEBAY_MCP_URL, current))
@@ -663,14 +663,14 @@ def collect_mcp_servers() -> list[tuple[str, str, str]]:
             else:
                 jlog(
                     "warn",
-                    "oscar-household:mcp",
+                    "solbay:mcp",
                     "servicebay-mcp skipped",
                     reason="no valid existing token and mint failed (will retry on next redeploy)",
                 )
     else:
         jlog(
             "info",
-            "oscar-household:mcp",
+            "solbay:mcp",
             "servicebay-mcp skipped",
             reason="missing url",
         )
@@ -682,7 +682,7 @@ def collect_mcp_servers() -> list[tuple[str, str, str]]:
     else:
         jlog(
             "info",
-            "oscar-household:mcp",
+            "solbay:mcp",
             "gatekeeper-mcp skipped",
             reason="missing url",
         )
@@ -694,14 +694,14 @@ def collect_mcp_servers() -> list[tuple[str, str, str]]:
     else:
         jlog(
             "info",
-            "oscar-household:mcp",
+            "solbay:mcp",
             "abs-mcp skipped",
             reason="no ABS_API_KEY (shim runs inert until set)",
         )
     return servers
 
 
-CHRONICLE_JOB_NAME = "oscar-daily-chronicle"
+CHRONICLE_JOB_NAME = "sol-daily-chronicle"
 
 
 def register_chronicle_cron() -> None:
@@ -717,7 +717,7 @@ def register_chronicle_cron() -> None:
     if status == 0:
         jlog(
             "warn",
-            "oscar-household:cron",
+            "solbay:cron",
             "chronicle cron skipped — Hermes jobs API unreachable",
         )
         return
@@ -725,7 +725,7 @@ def register_chronicle_cron() -> None:
     if any(isinstance(j, dict) and j.get("name") == CHRONICLE_JOB_NAME for j in jobs):
         jlog(
             "info",
-            "oscar-household:cron",
+            "solbay:cron",
             "chronicle cron already present",
             name=CHRONICLE_JOB_NAME,
         )
@@ -747,7 +747,7 @@ def register_chronicle_cron() -> None:
     if create_status in (200, 201):
         jlog(
             "info",
-            "oscar-household:cron",
+            "solbay:cron",
             "registered daily chronicle cron",
             name=CHRONICLE_JOB_NAME,
             schedule="59 23 * * *",
@@ -755,7 +755,7 @@ def register_chronicle_cron() -> None:
     else:
         jlog(
             "warn",
-            "oscar-household:cron",
+            "solbay:cron",
             "chronicle cron registration failed",
             status=create_status,
         )
@@ -770,7 +770,7 @@ def main() -> int:
         return 0  # config.yaml doesn't exist; nothing to do, not fatal
     if servers:
         restart_hermes_via_sb_api()
-    jlog("info", "oscar-household:post-deploy", "done", mcp_count=len(servers))
+    jlog("info", "solbay:post-deploy", "done", mcp_count=len(servers))
     return 0
 
 

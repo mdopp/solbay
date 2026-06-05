@@ -1,16 +1,16 @@
 ---
-name: oscar-audit-query
-description: Use when the user asks "what happened today?", "show me errors in the last hour", "what did the cloud connector cost yesterday?". Reads from OSCAR's SQLite tables (cloud_audit, system_settings) in oscar.db. Read-only — never mutates state.
+name: sol-audit-query
+description: Use when the user asks "what happened today?", "show me errors in the last hour", "what did the cloud connector cost yesterday?". Reads from Solilos's SQLite tables (cloud_audit, system_settings) in solilos.db. Read-only — never mutates state.
 version: 0.3.0
-author: OSCAR
+author: Solilos
 license: MIT
 ---
 
-# OSCAR — audit.query
+# Solilos — audit.query
 
 ## Overview
 
-Generic filter over OSCAR's domain-audit tables in `oscar.db`. One query returns a JSON page of rows; the agent summarises in natural language for the user.
+Generic filter over Solilos's domain-audit tables in `solilos.db`. One query returns a JSON page of rows; the agent summarises in natural language for the user.
 
 Currently one stream:
 - `cloud_audit` — every cloud-LLM call (timestamp, uid, trace_id, vendor, lengths, latency, cost-estimate, router score + reason; prompt/response fulltext only when debug-mode is on)
@@ -19,13 +19,13 @@ More streams plug into the same dispatch as Phase 3+ tables land (book/record/do
 
 ## When to use
 
-- "What did OSCAR send to the cloud today?"
+- "What did Solilos send to the cloud today?"
 - "Wieviel hat das gestern gekostet?"
 - "Show me errors in the last hour."
 - "Find every event tied to trace_id <X>."
 
 Out of scope:
-- Anything that mutates state (use `oscar-debug-set` for the debug-mode flag).
+- Anything that mutates state (use `sol-debug-set` for the debug-mode flag).
 - Reading **operational** logs (stdout-JSON). Those go through ServiceBay-MCP `get_container_logs` — different mechanism entirely.
 - Conversation history / messaging gateway state — Hermes owns those (SQLite + its own admin commands).
 
@@ -35,7 +35,7 @@ Out of scope:
    - `stream` (which table): currently always `cloud_audit`.
    - `since` / `until`: parse natural-language time. "today" → `today`. "last hour" → `1h`. "yesterday evening" → ISO timestamp.
    - filter fields (`uid`, `vendor`, `trace_id`, `min_cost_micro_usd`) as they apply.
-2. Open `oscar.db` (path from `OSCAR_DB_PATH`, default `/var/lib/oscar/oscar.db`) and run a parameterised SELECT against `cloud_audit` with the filters above. Apply `LIMIT` (default 50, max 200).
+2. Open `solilos.db` (path from `SOLILOS_DB_PATH`, default `/var/lib/solilos/solilos.db`) and run a parameterised SELECT against `cloud_audit` with the filters above. Apply `LIMIT` (default 50, max 200).
 3. Shape the result as:
    ```
    {"ok": true, "stream": "cloud_audit", "count": 7, "rows": [...]}
@@ -52,15 +52,15 @@ Out of scope:
 
 ## Failure paths
 
-- `oscar.db` missing or unreadable → brief: "Ich kann das Audit-Log gerade nicht lesen."
+- `solilos.db` missing or unreadable → brief: "Ich kann das Audit-Log gerade nicht lesen."
 - Unknown stream → "Den Audit-Stream gibt's nicht." (Should never happen with proper parsing.)
-- Empty result → "Heute hat OSCAR nichts an die Cloud geschickt."
+- Empty result → "Heute hat Solilos nichts an die Cloud geschickt."
 
 ## PII
 
-`cloud_audit.prompt_fulltext` / `response_fulltext` are returned only when `system_settings.debug_mode.active = true` (read live from `oscar.db`). Otherwise the rows return the metadata (lengths, hash, latency, cost) and the fulltext columns are nulled out — make the masking explicit in the summary if it matters. **Don't try to reconstruct prompts from hashes.**
+`cloud_audit.prompt_fulltext` / `response_fulltext` are returned only when `system_settings.debug_mode.active = true` (read live from `solilos.db`). Otherwise the rows return the metadata (lengths, hash, latency, cost) and the fulltext columns are nulled out — make the masking explicit in the summary if it matters. **Don't try to reconstruct prompts from hashes.**
 
-For deep debugging of a specific failure: instruct the user to flip debug-mode for a short window via `oscar-debug-set`, re-run the failing query, then turn debug-mode off.
+For deep debugging of a specific failure: instruct the user to flip debug-mode for a short window via `sol-debug-set`, re-run the failing query, then turn debug-mode off.
 
 ## Phase mapping
 

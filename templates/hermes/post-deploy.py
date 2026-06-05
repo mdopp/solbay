@@ -18,7 +18,7 @@ Three responsibilities:
 
   3. **Surface HERMES_API_KEY** as a __SB_CREDENTIAL__ marker so it
      lands in the wizard's SAVE-THESE-NOW banner. Operators paste it
-     into OSCAR's oscar-household config (or any other client) to
+     into Solilos's solbay config (or any other client) to
      authenticate against Hermes' API.
 
 UX_PHILOSOPHY.md § 2 bans operator-facing `podman exec`
@@ -211,7 +211,7 @@ def _extract_top_level_block(content: str, key: str) -> str:
     """Extract a top-level YAML block by key from config.yaml content,
     returning the block (header + indented body) as a string, or '' if
     not present. Mirrors strip_mcp_servers_block() in
-    templates/oscar-household/post-deploy.py — kept as a separate helper
+    templates/solbay/post-deploy.py — kept as a separate helper
     here so this template doesn't import across template directories.
 
     "Top-level" means the key starts at column 0; the block ends at the
@@ -252,14 +252,14 @@ def write_config_yaml(
     Preserves an existing `mcp_servers:` block if present (#1045) — the
     SB-MCP auto-wiring writes that block once on first install, and
     every subsequent hermes/post-deploy run would otherwise erase it
-    (the pre-2026-05-26 behaviour the oscar-household README still
+    (the pre-2026-05-26 behaviour the solbay README still
     warns about: "re-deploying the `hermes` template overwrites
-    config.yaml … re-deploy oscar-household afterwards to restore").
+    config.yaml … re-deploy solbay afterwards to restore").
     """
     config_dir = os.path.join(data_dir, "hermes")
     config_path = os.path.join(config_dir, "config.yaml")
     # Stash the existing mcp_servers block (if any) so the rewrite below
-    # doesn't erase it. See #1045 / the oscar-household README caveat.
+    # doesn't erase it. See #1045 / the solbay README caveat.
     preserved_mcp_servers = ""
     if os.path.exists(config_path):
         try:
@@ -370,7 +370,7 @@ def write_config_yaml(
         )
         return None
     # Make the dir traversable and the file readable so OTHER templates'
-    # post-deploys (notably oscar-household) can splice an `mcp_servers:`
+    # post-deploys (notably solbay) can splice an `mcp_servers:`
     # block into the same config.yaml. Without this, the hermes container
     # leaves the dir as 0o700 and downstream post-deploys silently bail
     # at os.path.exists() with "config.yaml not found" - observed
@@ -522,9 +522,9 @@ def ensure_sb_mcp_servers_block(config_path: str, sb_api: str) -> bool:
     Returns True when the file was mutated (signals the caller to
     trigger a restart so Hermes re-reads the config).
 
-    Note for OSCAR coexistence: oscar-household's post-deploy currently
+    Note for Solilos coexistence: solbay's post-deploy currently
     *rewrites* the entire `mcp_servers:` block, which would overwrite
-    this entry. The follow-up to make OSCAR preserve existing entries
+    this entry. The follow-up to make Solilos preserve existing entries
     instead of rewriting is tracked in the same #1045 thread.
     """
     if not os.path.exists(config_path):
@@ -573,7 +573,7 @@ def ensure_sb_mcp_servers_block(config_path: str, sb_api: str) -> bool:
         new_content = existing.replace(existing_mcp, healed_mcp, 1)
     elif existing_mcp:
         # Block exists but no servicebay entry — append into it (preserves
-        # other entries OSCAR may have written).
+        # other entries Solilos may have written).
         appended = existing_mcp.rstrip("\n") + "\n" + "".join(new_entry_lines)
         new_content = existing.replace(existing_mcp, appended, 1)
     else:
@@ -773,7 +773,7 @@ def _ha_api_timeout() -> int:
 
 def _wait_for_ha_token(token_path: str, deadline_secs: int | None = None) -> str | None:
     """#1002 — Poll for the HA long-lived token file. HA's post-deploy
-    auto-onboards the `oscar` user and writes this file near the end of
+    auto-onboards the `solilos` user and writes this file near the end of
     its run; if hermes' post-deploy is racing it (even with
     servicebay.dependencies: home-assistant) the file may not exist yet
     on first check. Returns the token once present + non-empty, or None
@@ -836,7 +836,7 @@ def _wait_for_ha_api(token: str, timeout_secs: int | None = None) -> bool:
 def adopt_ha_long_lived_token(data_dir: str) -> str | None:
     """When home-assistant's post-deploy has auto-onboarded HA (#934), it
     leaves a long-lived access token at
-    `<DATA_DIR>/home-assistant/homeassistant/.oscar-long-lived-token`.
+    `<DATA_DIR>/home-assistant/homeassistant/.solilos-long-lived-token`.
     Pick that up over the placeholder `HASS_TOKEN` from assemble and
     patch the deployed hermes pod yml so Hermes' native HA gateway can
     actually authenticate. Returns the token on success, or None when
@@ -848,7 +848,7 @@ def adopt_ha_long_lived_token(data_dir: str) -> str | None:
     the file on every install where HA's auto-onboarding hadn't yet
     written it, leaving HASS_TOKEN as the placeholder."""
     token_path = os.path.join(
-        data_dir, "home-assistant", "homeassistant", ".oscar-long-lived-token"
+        data_dir, "home-assistant", "homeassistant", ".solilos-long-lived-token"
     )
     token = _wait_for_ha_token(token_path)
     if token is None:
@@ -984,7 +984,7 @@ def main() -> int:
         time.sleep(3)
         restart_hermes(sb_api)
 
-    # 3. Surface the API key for downstream wiring (oscar-household,
+    # 3. Surface the API key for downstream wiring (solbay,
     # MCP clients, the operator's own scripts).
     if api_key:
         emit_credential(
@@ -993,7 +993,7 @@ def main() -> int:
             username="(bearer token)",
             password=api_key,
             importance="critical",
-            notes="Bearer token for Hermes' API. Send as `Authorization: Bearer <key>`. Bind a client by pasting this into oscar-household or your own MCP wiring. Regenerate from the wizard if it leaks.",
+            notes="Bearer token for Hermes' API. Send as `Authorization: Bearer <key>`. Bind a client by pasting this into solbay or your own MCP wiring. Regenerate from the wizard if it leaks.",
         )
 
     print(
@@ -1004,7 +1004,7 @@ def main() -> int:
             f"   Dashboard enabled on 127.0.0.1:{dashboard_port} — see README for the NPM + Authelia setup."
         )
     print(
-        f"   Other ServiceBay templates (oscar-household) can reach Hermes at http://127.0.0.1:{api_port}."
+        f"   Other ServiceBay templates (solbay) can reach Hermes at http://127.0.0.1:{api_port}."
     )
     return 0
 

@@ -13,7 +13,7 @@ metadata:
     # ollama lands first and the http://127.0.0.1:11434 target resolves
     # on first Hermes start.
     # home-assistant must come up before us so the post-deploy can pick up
-    # `.oscar-long-lived-token` (#1002 fix for the timing race that left
+    # `.solilos-long-lived-token` (#1002 fix for the timing race that left
     # HASS_TOKEN as a placeholder). ollama is the LLM provider Hermes
     # talks to on startup.
     servicebay.dependencies: "ollama,home-assistant"
@@ -33,7 +33,7 @@ spec:
   #   1. Hermes can reach Ollama at 127.0.0.1:11434 — two hostNetwork
   #      pods share the host's network namespace, which is what makes
   #      that loopback-cross-pod call work.
-  #   2. OSCAR's `oscar-household` pod (also hostNetwork) can reach
+  #   2. Solilos's `solbay` pod (also hostNetwork) can reach
   #      Hermes' API at 127.0.0.1:{{HERMES_API_PORT}}.
   #   3. NPM (also hostNetwork) proxies the in-container dashboard from
   #      the same host loopback, behind Authelia forward-auth.
@@ -57,7 +57,7 @@ spec:
       name: hermes-data
   # The notes vault is the file-share Syncthing share (host uid 1000),
   # bind-mounted in at /opt/data/notes. The gateway runs as hermes (10000,
-  # a different host subuid), so without this it cannot write — every OSCAR
+  # a different host subuid), so without this it cannot write — every Solilos
   # note-writing skill (media-ingestion, dynamic-skills, daily-chronicle and
   # its cron) silently fails to persist. We can't chown across the userns to
   # 10000 without breaking the file-share services (samba/syncthing/
@@ -128,7 +128,7 @@ spec:
     # and that path's `_resolve_named_custom_runtime` short-circuits on
     # `provider: custom` (config.yaml's value) before ever consulting
     # `model.base_url`. Without OPENAI_BASE_URL + OPENAI_API_KEY in env,
-    # every chat completion through Open WebUI / OSCAR / external API
+    # every chat completion through Open WebUI / Solilos / external API
     # hits its auto-detect fallback and raises "No inference provider
     # configured. Run 'hermes model'…" — observed live 2026-05-26.
     # Setting these here makes the env path's openrouter-with-custom-
@@ -168,18 +168,18 @@ spec:
     # running as the host user — then hits EACCES writing skills on every
     # (re)install. A read-only mount can't be chowned, so the host dir
     # keeps its host-user ownership.
-    - mountPath: /opt/data/skills/oscar
-      name: oscar-skills
+    - mountPath: /opt/data/skills/solilos
+      name: solilos-skills
       readOnly: true
-    # Drafted skills go here, NOT under /opt/data/skills/oscar. Hermes'
-    # skill loader scans /opt/data/skills/oscar; anything that lands
-    # there is live immediately. OSCAR's dynamic-skills SKILL.md writes
+    # Drafted skills go here, NOT under /opt/data/skills/solilos. Hermes'
+    # skill loader scans /opt/data/skills/solilos; anything that lands
+    # there is live immediately. Solilos's dynamic-skills SKILL.md writes
     # drafts here instead, and an admin promotes them via the
     # ServiceBay dashboard (issue #940). Keeping the pending dir
     # outside the loader's scan root is the structural half of that
     # gate — the SKILL.md is the prompt-level half.
     - mountPath: /opt/data/skills-pending
-      name: oscar-skills-pending
+      name: solilos-skills-pending
     - mountPath: /opt/data/notes
       name: syncthing-notes
 
@@ -188,13 +188,13 @@ spec:
     hostPath:
       path: {{DATA_DIR}}/hermes
       type: DirectoryOrCreate
-  - name: oscar-skills
+  - name: solilos-skills
     hostPath:
-      path: {{DATA_DIR}}/oscar-household/skills
+      path: {{DATA_DIR}}/solbay/skills
       type: DirectoryOrCreate
-  - name: oscar-skills-pending
+  - name: solilos-skills-pending
     hostPath:
-      path: {{DATA_DIR}}/oscar-household/skills-pending
+      path: {{DATA_DIR}}/solbay/skills-pending
       type: DirectoryOrCreate
   - name: syncthing-notes
     hostPath:

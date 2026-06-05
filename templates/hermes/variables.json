@@ -6,7 +6,7 @@
   },
   "HERMES_API_KEY": {
     "type": "secret",
-    "description": "Bearer token clients send as `Authorization: Bearer <key>` on requests to Hermes' API. Auto-generated; the wizard surfaces it as a credential so operators can paste it into OSCAR's `oscar-household` config (or any other client). Regenerate from the wizard if it leaks."
+    "description": "Bearer token clients send as `Authorization: Bearer <key>` on requests to Hermes' API. Auto-generated; the wizard surfaces it as a credential so operators can paste it into Solilos's `solbay` config (or any other client). Regenerate from the wizard if it leaks."
   },
   "HERMES_LLM_PROVIDER_URL": {
     "type": "text",
@@ -51,7 +51,7 @@
   "TELEGRAM_BOT_TOKEN": {
     "type": "secret",
     "noAutoGenerate": true,
-    "description": "Optional: Telegram bot token from @BotFather. When set, Hermes' Telegram gateway starts and routes inbound chats to OSCAR. Pair with TELEGRAM_ALLOWED_USERS — without an allowlist Hermes denies every message and logs `No user allowlists configured`. Leave blank if you don't use Telegram (post-deploy skips writing the .env entry; gateway stays off)."
+    "description": "Optional: Telegram bot token from @BotFather. When set, Hermes' Telegram gateway starts and routes inbound chats to Solilos. Pair with TELEGRAM_ALLOWED_USERS — without an allowlist Hermes denies every message and logs `No user allowlists configured`. Leave blank if you don't use Telegram (post-deploy skips writing the .env entry; gateway stays off)."
   },
   "TELEGRAM_ALLOWED_USERS": {
     "type": "text",
