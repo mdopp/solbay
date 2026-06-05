@@ -39,6 +39,13 @@ spec:
     # #508 for the existing AdGuard + Syncthing wiring).
     - name: OLLAMA_HOST
       value: "127.0.0.1:{{OLLAMA_PORT}}"
+    # Force Ollama's DEFAULT load context. Stock default is 4096, but
+    # Hermes' system prompt is 4157 tokens → ~1 token left for output →
+    # finish_reason='length' loop (#146). Hermes injects
+    # options.num_ctx, but Ollama's /v1/chat/completions ignores
+    # per-request num_ctx — only this env-set default actually applies.
+    - name: OLLAMA_CONTEXT_LENGTH
+      value: "{{OLLAMA_CONTEXT_LENGTH}}"
     # GPU passthrough (CDI). OLLAMA_GPU_PASSTHROUGH=yes renders the
     # resources block below. (Blank does not render it, but post-deploy
     # still auto-engages the GPU when /etc/cdi/nvidia.yaml exists — see

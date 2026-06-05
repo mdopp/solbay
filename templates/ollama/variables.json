@@ -24,6 +24,11 @@
     "description": "Blank = auto-detect: post-deploy engages NVIDIA GPU passthrough when the host has a CDI-registered GPU (`/etc/cdi/nvidia.yaml`, from `nvidia-ctk cdi generate`), otherwise CPU-only. Set `yes` to force GPU or `no` to force CPU. Actual passthrough is delivered by post-deploy's #1026 fixup, which swaps the .kube unit for a `.container` Quadlet with `AddDevice=nvidia.com/gpu=all` (podman silently drops the manifest's `resources.limits.nvidia.com/gpu`, so the fixup — not the rendered block — is what gets the device).",
     "default": ""
   },
+  "OLLAMA_CONTEXT_LENGTH": {
+    "type": "text",
+    "description": "Ollama's DEFAULT load context window (tokens) — forces the size a model is loaded at, regardless of per-request hints. Fixes Hermes' 1-token truncation loop (#146): Hermes' system prompt is 4157 tokens, larger than Ollama's stock 4096 default, leaving ~1 token for output (finish_reason='length' every turn). Hermes tries to inject `options.num_ctx`, but Ollama's `/v1/chat/completions` endpoint silently ignores per-request num_ctx — only this env-set DEFAULT actually lands. Default `131072` is gemma4:e4b's full native context, which still loads 100% on GPU at only ~6.5 GB VRAM. Tune down only if you switch to a larger model that won't fit the full window.",
+    "default": "131072"
+  },
   "OLLAMA_READINESS_TIMEOUT_SECONDS": {
     "type": "text",
     "description": "Stall window for model pulls, in seconds: a pull is abandoned only after this long with NO download progress — not on total elapsed time, so a slow link pulling a multi-GB model for an hour is fine as long as bytes keep flowing. Also caps the initial wait for the Ollama API to answer (at most 120s). Raise it if your connection has long stalls; lower it to fail faster on a dead mirror.",
