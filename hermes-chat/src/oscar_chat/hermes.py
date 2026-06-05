@@ -2,6 +2,10 @@
 
 Contract (NOT the gatekeeper's placeholder `/converse`):
   - `POST /api/sessions`                 -> create a session, returns `{"id": ...}`
+  - `GET  /api/sessions`                 -> `{"data": [{id, title, preview, last_active, ...}]}`
+  - `GET  /api/sessions/{id}`            -> `{"session": {...}}` (summary, no messages)
+  - `GET  /api/sessions/{id}/messages`   -> `{"data": [{role, content, ...}]}`
+  - `PATCH /api/sessions/{id}`           -> body `{"title": ...}`, sets the title
   - `POST /api/sessions/{id}/chat`       -> body `{"input": ...}`, returns the reply
   - `POST /api/sessions/{id}/chat/stream`-> body `{"input": ...}`, SSE event stream
 
@@ -67,7 +71,10 @@ class HermesClient:
         return [_session_summary(raw) for raw in _iter_session_items(body)]
 
     async def get_session(self, session_id: str, uid: str) -> dict[str, Any] | None:
-        """Fetch a session + its message history.
+        """Fetch a session summary + its message history.
+
+        The session endpoint returns only a summary; messages live on a
+        separate `/messages` endpoint, so we fetch both.
 
         No ownership 404 (single-resident): Hermes v0.15.1 stores
         `user_id: null`, so an owner check would reject the caller's own
@@ -80,13 +87,33 @@ class HermesClient:
                 if resp.status == 404:
                     return None
                 body = await self._json_or_raise(resp, "get_session")
-        session = body.get("session") if isinstance(body, dict) else None
-        raw = session if isinstance(session, dict) else body
-        if not isinstance(raw, dict):
-            return None
+            session = body.get("session") if isinstance(body, dict) else None
+            raw = session if isinstance(session, dict) else body
+            if not isinstance(raw, dict):
+                return None
+            msg_url = f"{self._base_url}/api/sessions/{session_id}/messages"
+            async with client.get(msg_url, headers=self._headers()) as resp:
+                msg_body = await self._json_or_raise(resp, "get_messages")
         summary = _session_summary(raw)
-        summary["messages"] = _extract_messages(raw)
+        summary["messages"] = _extract_messages(msg_body)
         return summary
+
+    async def set_title(self, session_id: str, title: str) -> None:
+        """Persist a session title (PATCH). Silent on a non-2xx — a title is
+        a nicety, not worth failing the turn it rides on."""
+        url = f"{self._base_url}/api/sessions/{session_id}"
+        async with aiohttp.ClientSession(timeout=self._timeout) as client:
+            async with client.patch(
+                url, json={"title": title}, headers=self._headers()
+            ) as resp:
+                if resp.status >= 400:
+                    detail = (await resp.text())[:300]
+                    log.error(
+                        "chat.hermes.error",
+                        op="set_title",
+                        status=resp.status,
+                        body=detail,
+                    )
 
     async def chat(self, session_id: str, text: str) -> str:
         """Send one turn to an existing session; return the reply text."""
@@ -197,21 +224,41 @@ def _session_owner(raw: Any) -> str:
 
 
 def _session_summary(raw: dict[str, Any]) -> dict[str, Any]:
+    """Fold a Hermes session item into the browser-facing summary.
+
+    Title is null for chat-created sessions, so we surface `preview` (the
+    first user message, supplied by the list endpoint) as a derived label
+    the page can fall back to. `last_active` is an epoch float — emitted as
+    a string the page parses as either ISO or epoch seconds.
+    """
     sid = str(raw.get("id") or raw.get("session_id") or "")
     title = str(raw.get("title") or raw.get("name") or "").strip()
+    preview = str(raw.get("preview") or "").strip()
     last = (
-        raw.get("last_activity")
+        raw.get("last_active")
+        or raw.get("last_activity")
         or raw.get("updated_at")
-        or raw.get("last_activity_at")
+        or raw.get("started_at")
         or raw.get("created_at")
         or ""
     )
-    return {"id": sid, "title": title, "last_activity": str(last or "")}
+    return {
+        "id": sid,
+        "title": title,
+        "preview": preview,
+        "last_activity": str(last or ""),
+    }
 
 
-def _extract_messages(raw: dict[str, Any]) -> list[dict[str, str]]:
-    """Normalise a session's message history to `[{role, content}]`."""
-    messages = raw.get("messages")
+def _extract_messages(body: dict[str, Any]) -> list[dict[str, str]]:
+    """Normalise a `/messages` payload to `[{role, content}]`.
+
+    Hermes returns `{"object": "list", "data": [...]}`; we tolerate a bare
+    list or a `messages` key too.
+    """
+    messages = body.get("data")
+    if not isinstance(messages, list):
+        messages = body.get("messages")
     if not isinstance(messages, list):
         return []
     out: list[dict[str, str]] = []

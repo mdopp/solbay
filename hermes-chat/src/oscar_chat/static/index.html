@@ -92,9 +92,6 @@
       height: 100vh;
       min-height: 0;
     }
-    @media (max-width: 720px) {
-      .sidebar { width: 200px; flex-basis: 200px; }
-    }
     header {
       padding: 14px 18px;
       border-bottom: 1px solid var(--line);
@@ -103,6 +100,43 @@
       display: flex;
       align-items: baseline;
       gap: 8px;
+    }
+    #sidebar-toggle {
+      display: none;
+      padding: 0;
+      width: 34px;
+      height: 30px;
+      background: none;
+      color: var(--ink);
+      font-size: 18px;
+      align-self: center;
+    }
+    #backdrop { display: none; }
+
+    /* Mobile: the sidebar overlays the chat instead of stealing width, and
+       is collapsed by default — a hamburger in the header toggles it. */
+    @media (max-width: 720px) {
+      #sidebar-toggle { display: inline-block; }
+      .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        z-index: 20;
+        width: 78%;
+        max-width: 300px;
+        flex-basis: auto;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+      }
+      body.sidebar-open .sidebar { transform: translateX(0); }
+      body.sidebar-open #backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        background: rgba(0, 0, 0, 0.35);
+      }
     }
     header .sub { font-weight: 400; color: var(--muted); font-size: 13px; }
     #log {
@@ -205,8 +239,12 @@
       </div>
       <div id="sessions"></div>
     </aside>
+    <div id="backdrop"></div>
     <div class="app">
-      <header>OSCAR <span class="sub">household chat</span></header>
+      <header>
+        <button id="sidebar-toggle" type="button" aria-label="Toggle sessions">☰</button>
+        OSCAR <span class="sub">household chat</span>
+      </header>
       <div id="log" aria-live="polite"></div>
       <form id="composer">
         <textarea id="input" rows="1" placeholder="Message OSCAR…" autofocus></textarea>
@@ -223,7 +261,15 @@
       var send = document.getElementById("send");
       var sessionsEl = document.getElementById("sessions");
       var newBtn = document.getElementById("new-session");
+      var sidebarToggle = document.getElementById("sidebar-toggle");
+      var backdrop = document.getElementById("backdrop");
       var sessionId = null;
+
+      function closeSidebar() { document.body.classList.remove("sidebar-open"); }
+      sidebarToggle.addEventListener("click", function () {
+        document.body.classList.toggle("sidebar-open");
+      });
+      backdrop.addEventListener("click", closeSidebar);
 
       function atBottom() {
         return log.scrollHeight - log.scrollTop - log.clientHeight < 40;
@@ -386,9 +432,11 @@
       });
 
       // --- Session list ---------------------------------------------------
-      function fmtWhen(iso) {
-        if (!iso) return "";
-        var d = new Date(iso);
+      function fmtWhen(ts) {
+        if (!ts) return "";
+        // Hermes emits an epoch float (seconds); also tolerate an ISO string.
+        var num = Number(ts);
+        var d = isNaN(num) ? new Date(ts) : new Date(num * 1000);
         if (isNaN(d.getTime())) return "";
         return d.toLocaleString([], {
           month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
@@ -409,7 +457,7 @@
           row.className = "session" + (s.id === sessionId ? " active" : "");
           var title = document.createElement("div");
           title.className = "title";
-          title.textContent = s.title || "Untitled session";
+          title.textContent = s.title || s.preview || "New session";
           row.appendChild(title);
           var when = fmtWhen(s.last_activity);
           if (when) {
@@ -434,6 +482,7 @@
 
       function openSession(id) {
         if (send.disabled) return;
+        closeSidebar();
         fetch("/api/sessions/" + encodeURIComponent(id))
           .then(function (r) {
             if (!r.ok) throw new Error("not found");
@@ -474,6 +523,7 @@
         sessionId = null;
         clearLog();
         loadSessions();
+        closeSidebar();
         input.focus();
       }
       newBtn.addEventListener("click", newSession);
