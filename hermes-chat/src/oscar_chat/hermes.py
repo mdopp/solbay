@@ -50,32 +50,29 @@ class HermesClient:
         return session_id
 
     async def list_sessions(self, uid: str) -> list[dict[str, Any]]:
-        """List sessions owned by `uid`.
+        """List all sessions (single-resident: no per-resident filter).
 
-        We pass `user_id` as a query param so Hermes scopes server-side, then
-        re-filter the returned list by each session's own `user_id` so a
-        resident can never see another resident's sessions even if Hermes
-        ignored the param. Each item is `{id, title, last_activity}`.
+        Per-resident isolation is deferred: Hermes v0.15.1 stores
+        `user_id: null` (the `user_id` we POST on create is not persisted or
+        returned), so an owner-filter here would reject every session
+        including the caller's own. We ship list-all for the single-resident
+        reality and restore filtering before multi-resident — tracked in #153.
+        `uid` is still accepted so the signature survives that restore.
+        Each item is `{id, title, last_activity}`.
         """
         url = f"{self._base_url}/api/sessions"
         async with aiohttp.ClientSession(timeout=self._timeout) as client:
-            async with client.get(
-                url, params={"user_id": uid}, headers=self._headers()
-            ) as resp:
+            async with client.get(url, headers=self._headers()) as resp:
                 body = await self._json_or_raise(resp, "list_sessions")
-        out: list[dict[str, Any]] = []
-        for raw in _iter_session_items(body):
-            if _session_owner(raw) != uid:
-                continue
-            out.append(_session_summary(raw))
-        return out
+        return [_session_summary(raw) for raw in _iter_session_items(body)]
 
     async def get_session(self, session_id: str, uid: str) -> dict[str, Any] | None:
-        """Fetch a session + its message history, scoped to `uid`.
+        """Fetch a session + its message history.
 
-        Returns `None` if the session does not belong to `uid` (so the proxy
-        can 404 it) — a resident must not open another resident's session by
-        guessing its id.
+        No ownership 404 (single-resident): Hermes v0.15.1 stores
+        `user_id: null`, so an owner check would reject the caller's own
+        session. Restore the per-resident gate before multi-resident — #153.
+        Returns `None` only when Hermes itself 404s the id.
         """
         url = f"{self._base_url}/api/sessions/{session_id}"
         async with aiohttp.ClientSession(timeout=self._timeout) as client:
@@ -85,7 +82,7 @@ class HermesClient:
                 body = await self._json_or_raise(resp, "get_session")
         session = body.get("session") if isinstance(body, dict) else None
         raw = session if isinstance(session, dict) else body
-        if not isinstance(raw, dict) or _session_owner(raw) != uid:
+        if not isinstance(raw, dict):
             return None
         summary = _session_summary(raw)
         summary["messages"] = _extract_messages(raw)
