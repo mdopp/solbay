@@ -58,6 +58,7 @@ class GatekeeperHandler(AsyncEventHandler):
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         info: Info | None = None,
+        hermes: HermesClient | None = None,
     ):
         super().__init__(reader, writer)
         self._info = info
@@ -65,7 +66,9 @@ class GatekeeperHandler(AsyncEventHandler):
         self.client_id = self._resolve_client_id()
         self._audio_start: AudioStart | None = None
         self._audio_buffer: list[AudioChunk] = []
-        self._hermes = HermesClient(settings.hermes_url, settings.hermes_token)
+        self._hermes = hermes or HermesClient(
+            settings.hermes_url, settings.hermes_token
+        )
         log.info(
             "gatekeeper.session.open",
             trace_id=self.trace_id,
