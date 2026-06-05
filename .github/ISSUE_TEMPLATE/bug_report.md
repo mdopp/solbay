@@ -17,7 +17,7 @@ labels: bug
 ## Starting-point files
 
 <!-- Where a solver should start looking, e.g.
-     voice-gatekeeper/src/gatekeeper/handler.py, templates/oscar-household/template.yml -->
+     voice-gatekeeper/src/gatekeeper/handler.py, templates/solbay/template.yml -->
 
 ## Impact (optional)
 

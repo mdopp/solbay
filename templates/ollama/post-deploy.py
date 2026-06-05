@@ -577,7 +577,7 @@ def main() -> int:
             jlog(
                 "warn",
                 "ollama:pull",
-                'vision-model pull did not complete; OSCAR\'s media-ingestion-multimodal skill will fall back to text-only. Pull manually with `curl -X POST http://127.0.0.1:%s/api/pull -d \'{"name":"%s"}\'` or bump OLLAMA_READINESS_TIMEOUT_SECONDS.'
+                'vision-model pull did not complete; Solilos\'s media-ingestion-multimodal skill will fall back to text-only. Pull manually with `curl -X POST http://127.0.0.1:%s/api/pull -d \'{"name":"%s"}\'` or bump OLLAMA_READINESS_TIMEOUT_SECONDS.'
                 % (port, vision_model),
                 model=vision_model,
             )
@@ -590,7 +590,7 @@ def main() -> int:
     if vision_model:
         print(f"   Vision model: {vision_model} (multimodal-capable).")
     print(
-        f"   Other ServiceBay templates (hermes, oscar-household) can reach it at http://127.0.0.1:{port}."
+        f"   Other ServiceBay templates (hermes, solbay) can reach it at http://127.0.0.1:{port}."
     )
     return 0
 

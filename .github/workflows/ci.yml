@@ -1,6 +1,6 @@
 name: ci
 
-# Lint + test + scan the Python in OSCAR (voice-gatekeeper bridge, database/alembic,
+# Lint + test + scan the Python in Solilos (voice-gatekeeper bridge, database/alembic,
 # the Hermes plugin entrypoint, ServiceBay post-deploy scripts). Image builds
 # live in build-images.yml; template-/skill-/docs-only changes are gated by
 # real-box /verify, not CI.

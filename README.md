@@ -1,41 +1,41 @@
-# OSCAR
+# Solilos
 
-**OSCAR** is a household AI assistant that ServiceBay can deploy as
+**Solilos** is a household AI assistant that ServiceBay can deploy as
 one click and Hermes can consume as a skill pack independently.
 
 ## What's in this repo
 
-- **Hermes skills** (`templates/oscar-household/skills/`) — five
+- **Hermes skills** (`templates/solbay/skills/`) — five
   procedures Hermes loads at runtime: `audit-query`, `debug-set`,
   `dynamic-skills`, `media-ingestion-multimodal`, `status`.
-- **ServiceBay templates** (`templates/{ollama,hermes,hermes-chat,oscar-household}/`)
+- **ServiceBay templates** (`templates/{ollama,hermes,solilos-chat,solbay}/`)
   — the four-pod deployment recipe that wires local LLM, agent
-  runtime, chat UI, and the OSCAR-specific glue (skill mount, voice
+  runtime, chat UI, and the Solilos-specific glue (skill mount, voice
   bridge, DB init).
-- **OSCAR stack** (`stacks/oscar/stack.yml`) — bundles the four
+- **Solilos stack** (`stacks/solbay/stack.yml`) — bundles the four
   templates so a ServiceBay operator can install with one click.
 - **Voice gatekeeper image source** (`voice-gatekeeper/`) — Python
   Wyoming-protocol bridge from HA Voice PE satellites to Hermes,
-  built into `ghcr.io/mdopp/oscar-gatekeeper:latest` and referenced
-  by `oscar-household`'s pod yaml.
+  built into `ghcr.io/mdopp/solilos-gatekeeper:latest` and referenced
+  by `solbay`'s pod yaml.
 - **Database image source** (`database/`) — Alembic schema-init
-  container that runs `alembic upgrade head` against the OSCAR pod's
-  local SQLite (`oscar.db`) on every pod start. Built into
-  `ghcr.io/mdopp/oscar-household-init:latest`.
+  container that runs `alembic upgrade head` against the Solilos pod's
+  local SQLite (`solilos.db`) on every pod start. Built into
+  `ghcr.io/mdopp/solilos-schema-init:latest`.
 - **Chat proxy image source** (`hermes-chat/`) — a small, stateless
   aiohttp proxy serving a static chat page over Hermes' native session
-  API, built into `ghcr.io/mdopp/oscar-chat:latest` and deployed by the
-  `hermes-chat` template at `chat.<publicDomain>`.
+  API, built into `ghcr.io/mdopp/solilos-chat:latest` and deployed by the
+  `solilos-chat` template at `chat.<publicDomain>`.
 
 ## Two install paths
 
 **ServiceBay route (recommended for households running ServiceBay):**
 
-1. ServiceBay → Settings → Registries → Add `mdopp/oscar`
-   (`https://github.com/mdopp/oscar.git`).
-2. After save, the four OSCAR templates and the `oscar` stack appear
+1. ServiceBay → Settings → Registries → Add `mdopp/solbay`
+   (`https://github.com/mdopp/solbay.git`).
+2. After save, the four Solilos templates and the `solbay` stack appear
    in the wizard.
-3. Install the stack. The `oscar-household` template's `post-deploy.py`
+3. Install the stack. The `solbay` template's `post-deploy.py`
    handles skill delivery to Hermes (via ServiceBay's
    asset-transport mechanism, [mdopp/servicebay#1156]), DB schema
    init, MCP wiring, and voice-bridge container startup.
@@ -43,26 +43,26 @@ one click and Hermes can consume as a skill pack independently.
 **Standalone Hermes route (Hermes outside ServiceBay):**
 
 1. In the Hermes dashboard: Skills → Install from Git URL → paste
-   `mdopp/oscar` (or the full HTTPS URL).
-2. Hermes clones to `~/.hermes/plugins/oscar/`, reads `plugin.yaml`,
+   `mdopp/solbay` (or the full HTTPS URL).
+2. Hermes clones to `~/.hermes/plugins/solbay/`, reads `plugin.yaml`,
    and runs `__init__.py:on_load(ctx)` to register the five skills.
 3. The voice bridge and DB schema-init are NOT installed via this
    route — they're ServiceBay-deployed containers. A standalone
    Hermes that wants the gatekeeper would need to run
-   `ghcr.io/mdopp/oscar-gatekeeper:latest` on its own.
+   `ghcr.io/mdopp/solilos-gatekeeper:latest` on its own.
 
 ## Repository layout
 
 ```
-oscar/
+solbay/
 ├── README.md                       # this file
 ├── plugin.yaml                     # Hermes plugin manifest
 ├── __init__.py                     # Hermes plugin entrypoint
 ├── templates/                       # ServiceBay templates (legacy layout)
 │   ├── ollama/
 │   ├── hermes/
-│   ├── hermes-chat/
-│   └── oscar-household/
+│   ├── solilos-chat/
+│   └── solbay/
 │       ├── template.yml
 │       ├── post-deploy.py
 │       ├── variables.json
@@ -89,8 +89,8 @@ oscar/
 │   ├── src/
 │   └── tests/
 ├── stacks/
-│   └── oscar/
-│       ├── stack.yml               # templates: [ollama, hermes, hermes-chat, oscar-household]
+│   └── solbay/
+│       ├── stack.yml               # templates: [ollama, hermes, solilos-chat, solbay]
 │       └── README.md
 └── .github/workflows/
     └── build-images.yml            # publishes the GHCR images
@@ -100,9 +100,9 @@ oscar/
 
 `.github/workflows/build-images.yml` publishes:
 
-- `ghcr.io/mdopp/oscar-gatekeeper:latest` (and version tags) from
+- `ghcr.io/mdopp/solilos-gatekeeper:latest` (and version tags) from
   `voice-gatekeeper/Dockerfile`.
-- `ghcr.io/mdopp/oscar-household-init:latest` (and version tags) from
+- `ghcr.io/mdopp/solilos-schema-init:latest` (and version tags) from
   `database/Dockerfile`.
 
 Triggered on push to `main` and tags `v*`.
