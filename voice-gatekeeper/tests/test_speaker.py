@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import dataclasses
 import sqlite3
 from pathlib import Path
 
@@ -192,10 +193,17 @@ async def test_resolve_uid_matches_and_touches_last_seen(tmp_path, monkeypatch):
     alice = _emb(7)
     upsert_embedding(db, "alice", alice, sample_count=1, enrolled_via="test")
 
-    monkeypatch.setattr(handler.settings, "speaker_id_enabled", True)
-    monkeypatch.setattr(handler.settings, "default_uid", "guest")
-    monkeypatch.setattr(handler.settings, "speaker_id_threshold", 0.5)
-    monkeypatch.setattr(handler.settings, "solilos_db_path", db)
+    monkeypatch.setattr(
+        handler,
+        "settings",
+        dataclasses.replace(
+            handler.settings,
+            speaker_id_enabled=True,
+            default_uid="guest",
+            speaker_id_threshold=0.5,
+            solilos_db_path=db,
+        ),
+    )
 
     class _StubExtractor:
         def extract(self, pcm, *, rate, width, channels):
