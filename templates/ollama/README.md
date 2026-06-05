@@ -35,6 +35,13 @@ networking.
   you've changed `OLLAMA_DEFAULT_MODEL` to a text-only tag and still
   want a vision backend for OSCAR's `media-ingestion-multimodal` skill.
   Suggested non-default tags: `qwen2.5vl:7b`, `llava:13b`, `bakllava:7b`.
+- `OLLAMA_CONTEXT_LENGTH` — Ollama's default load context window, in
+  tokens. Default `131072` (gemma4:e4b's full native context, ~6.5 GB
+  VRAM, 100% GPU). Forces the size models load at so Hermes' 4157-token
+  system prompt isn't truncated to a 1-token reply by Ollama's stock
+  4096 default (#146 — the `/v1` endpoint ignores per-request
+  `num_ctx`, so only this env-set default lands). Tune down only for a
+  larger model that won't fit the full window.
 - `OLLAMA_GPU_PASSTHROUGH` — leave blank for CPU; set non-blank
   for NVIDIA GPU passthrough via CDI.
 - `OLLAMA_READINESS_TIMEOUT_SECONDS` — post-deploy model-pull
