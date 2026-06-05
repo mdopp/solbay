@@ -15,6 +15,7 @@ from wyoming.server import AsyncServer
 from . import __version__ as GATEKEEPER_VERSION
 from .config import settings
 from .handler import GatekeeperHandler
+from .hermes import HermesClient
 from .mcp_server import serve as serve_mcp
 from .push import serve as serve_push
 
@@ -74,7 +75,10 @@ def _info() -> Info:
 async def _serve_wyoming() -> None:
     server = AsyncServer.from_uri(settings.gatekeeper_uri)
     log.info("gatekeeper.boot", uri=settings.gatekeeper_uri)
-    await server.run(lambda r, w: GatekeeperHandler(r, w, _info()))
+    # One shared Hermes client so its per-conversation session cache survives
+    # across connections — each Wyoming turn is its own connection (#142).
+    hermes = HermesClient(settings.hermes_url, settings.hermes_token)
+    await server.run(lambda r, w: GatekeeperHandler(r, w, _info(), hermes))
 
 
 async def _serve() -> None:
