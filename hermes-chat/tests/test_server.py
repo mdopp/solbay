@@ -80,7 +80,7 @@ class _FakeHermes:
             yield event
 
     async def list_sessions(self, uid):
-        # Mirror the real client's scoping invariant: only this uid's sessions.
+        # Mirror the real client: list-all (no per-resident filter) until #153.
         return [
             {
                 "id": s["id"],
@@ -88,12 +88,12 @@ class _FakeHermes:
                 "last_activity": s.get("last_activity", ""),
             }
             for s in self._store
-            if s.get("user_id") == uid
         ]
 
     async def get_session(self, session_id, uid):
+        # Mirror the real client: open any session (no ownership 404) until #153.
         for s in self._store:
-            if s["id"] == session_id and s.get("user_id") == uid:
+            if s["id"] == session_id:
                 return {
                     "id": s["id"],
                     "title": s.get("title", ""),
@@ -290,7 +290,9 @@ def _two_user_store():
     ]
 
 
-async def test_list_sessions_scoped_to_user(aiohttp_client):
+async def test_list_sessions_returns_all(aiohttp_client):
+    # Single-resident reality: list-all. Per-resident isolation -> #153
+    # (Hermes v0.15.1 stores user_id:null, so no owner-filter is possible yet).
     fake = _FakeHermes(store=_two_user_store())
     app = build_app(
         hermes=fake, remote_user_header="Remote-User", default_uid="household"
@@ -300,9 +302,8 @@ async def test_list_sessions_scoped_to_user(aiohttp_client):
     resp = await client.get("/api/sessions", headers={"Remote-User": "mdopp"})
     body = await resp.json()
     assert resp.status == 200
-    ids = [s["id"] for s in body["sessions"]]
-    assert ids == ["s-mdopp"]
-    assert "s-lena" not in ids
+    ids = {s["id"] for s in body["sessions"]}
+    assert ids == {"s-mdopp", "s-lena"}
 
 
 async def test_create_session_returns_id(aiohttp_client):
@@ -333,21 +334,23 @@ async def test_get_own_session_returns_history(aiohttp_client):
     assert body["session"]["messages"][0]["content"] == "buy milk"
 
 
-async def test_cannot_open_other_users_session(aiohttp_client):
-    """PRIVACY INVARIANT: user A must not open user B's session by id."""
+async def test_open_any_session_single_resident(aiohttp_client):
+    # Single-resident reality: any listed session opens (no ownership 404).
+    # Per-resident isolation is intentionally deferred -> #153 (Hermes v0.15.1
+    # stores user_id:null, so the proxy cannot scope by resident yet); this
+    # must be restored before multi-resident chat.
     fake = _FakeHermes(store=_two_user_store())
     app = build_app(
         hermes=fake, remote_user_header="Remote-User", default_uid="household"
     )
     client = await aiohttp_client(app)
 
-    # mdopp tries to open lena's session by guessing its id.
     resp = await client.get("/api/sessions/s-lena", headers={"Remote-User": "mdopp"})
     body = await resp.json()
-    assert resp.status == 404
-    assert body["ok"] is False
+    assert resp.status == 200
+    assert body["session"]["id"] == "s-lena"
+    assert body["session"]["messages"][0]["content"] == "secret"
 
-    # And lena's session never shows in mdopp's list.
-    resp = await client.get("/api/sessions", headers={"Remote-User": "mdopp"})
-    listed = await resp.json()
-    assert all(s["id"] != "s-lena" for s in listed["sessions"])
+    # An unknown id still 404s (Hermes itself doesn't have it).
+    resp = await client.get("/api/sessions/nope", headers={"Remote-User": "mdopp"})
+    assert resp.status == 404
