@@ -1,9 +1,9 @@
-# OSCAR — house rules
+# Solilos — house rules
 
-OSCAR is a household AI assistant packaged as ServiceBay artifacts: ServiceBay
+Solilos is a household AI assistant packaged as ServiceBay artifacts: ServiceBay
 Pod-YAML templates, a Hermes skill pack, the `voice-gatekeeper` Wyoming↔Hermes
 bridge (Python, the code-heavy part), the `database` alembic schema-init
-sidecar, and the bundled `oscar` stack. It runs **on ServiceBay**. See
+sidecar, and the bundled `solbay` stack. It runs **on ServiceBay**. See
 `README.md` for the full layout and the two install paths.
 
 These rules apply to every session, human or agent.
@@ -12,7 +12,7 @@ These rules apply to every session, human or agent.
 
 - **Conventional Commits**: `type(scope): subject` — `feat`/`fix`/`refactor`/
   `chore`/`docs`/`test`. Scope mirrors the path: `fix(gatekeeper):`,
-  `feat(skill):`, `fix(template):`, `feat(oscar-household):`, `chore(db):`,
+  `feat(skill):`, `fix(template):`, `feat(solbay):`, `chore(db):`,
   `docs:`.
 - **No parentheses in the subject** beyond the conventional `(scope)`. A stray
   `(...)` token can make release tooling run green but cut no release — keep
@@ -36,14 +36,14 @@ These rules apply to every session, human or agent.
 - Template (`templates/**`), Hermes skill (`**/skills/*/SKILL.md`),
   `voice-gatekeeper`, `database`/migration, `stacks/**`, and `plugin.yaml`/
   `__init__.py` changes are verified by **deploying the changed artifact through
-  ServiceBay onto the box** and checking the OSCAR runtime — not by CI alone
+  ServiceBay onto the box** and checking the Solilos runtime — not by CI alone
   (CI only builds images). If you can't verify on the box, say so explicitly.
 
 ## Releases
 
-- OSCAR has **no release-please**. Releases are cut by pushing a `v*` tag, which
-  triggers `build-images.yml` to publish `oscar-gatekeeper` and
-  `oscar-household-init` to GHCR.
+- Solilos has **no release-please**. Releases are cut by pushing a `v*` tag, which
+  triggers `build-images.yml` to publish `solilos-gatekeeper` and
+  `schema-init` to GHCR.
 - **Don't** hand-bump versions in `pyproject.toml` or create/push tags unless
   explicitly asked.
 
