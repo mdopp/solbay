@@ -11,7 +11,7 @@ from oscar_chat.hermes import (
     _session_owner,
     _session_summary,
 )
-from oscar_chat.server import _normalize, build_app, resolve_uid
+from oscar_chat.server import _normalize, _title_from, build_app, resolve_uid
 
 
 class _FakeRequest:
@@ -62,6 +62,7 @@ class _FakeHermes:
     def __init__(self, events=None, store=None):
         self.created = []
         self.turns = []
+        self.titles = []
         self._events = events or []
         # store: list of {id, user_id, title, last_activity, messages}
         self._store = store or []
@@ -69,6 +70,9 @@ class _FakeHermes:
     async def create_session(self, uid):
         self.created.append(uid)
         return "sess-1"
+
+    async def set_title(self, session_id, title):
+        self.titles.append((session_id, title))
 
     async def chat(self, session_id, text):
         self.turns.append((session_id, text))
@@ -114,29 +118,62 @@ def test_session_owner_and_summary():
     assert _session_owner({"user_id": "mdopp"}) == "mdopp"
     assert _session_owner({"owner": "lena"}) == "lena"
     assert _session_owner({}) == ""
+    # Real list-item shape: title set, epoch `last_active`, `preview`.
     summ = _session_summary(
-        {"id": "x", "title": "Trip", "last_activity": "2026-06-05T10:00:00Z"}
+        {
+            "id": "x",
+            "title": "Trip",
+            "preview": "plan the trip",
+            "last_active": 1780677907.7,
+            "started_at": 1780677881.8,
+        }
     )
     assert summ == {
         "id": "x",
         "title": "Trip",
-        "last_activity": "2026-06-05T10:00:00Z",
+        "preview": "plan the trip",
+        "last_activity": "1780677907.7",
     }
 
 
-def test_extract_messages_shapes():
-    raw = {
-        "messages": [
+def test_session_summary_null_title_surfaces_preview():
+    # Chat-created sessions have title:null; the preview carries the label.
+    summ = _session_summary(
+        {"id": "y", "title": None, "preview": "buy milk", "started_at": 1780677881.8}
+    )
+    assert summ["title"] == ""
+    assert summ["preview"] == "buy milk"
+    assert summ["last_activity"] == "1780677881.8"
+
+
+def test_extract_messages_data_envelope():
+    # The real /messages payload: {"object": "list", "data": [...]}.
+    body = {
+        "object": "list",
+        "data": [
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": [{"text": "he"}, {"text": "llo"}]},
             {"role": "system", "content": ""},
-        ]
+        ],
     }
-    assert _extract_messages(raw) == [
+    assert _extract_messages(body) == [
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "hello"},
     ]
     assert _extract_messages({}) == []
+    # Tolerate a bare `messages` key too.
+    assert _extract_messages({"messages": [{"role": "user", "content": "yo"}]}) == [
+        {"role": "user", "content": "yo"}
+    ]
+
+
+def test_title_from_first_message():
+    assert _title_from("buy milk") == "buy milk"
+    assert _title_from("  hello   there  ") == "hello there"
+    long = "a" * 80
+    out = _title_from(long)
+    assert out.endswith("…") and len(out) <= 58
+    assert _title_from("") == ""
 
 
 def test_normalize_assistant_delta():
@@ -195,6 +232,8 @@ async def test_first_turn_creates_session(aiohttp_client):
     assert body["reply"] == "echo: hello"
     assert fake.created == ["mdopp"]
     assert fake.turns == [("sess-1", "hello")]
+    # First turn derives + persists a title from the user's message.
+    assert fake.titles == [("sess-1", "hello")]
 
 
 async def test_subsequent_turn_reuses_session(aiohttp_client):
@@ -211,6 +250,8 @@ async def test_subsequent_turn_reuses_session(aiohttp_client):
     assert body["session_id"] == "existing"
     assert fake.created == []
     assert fake.turns == [("existing", "again")]
+    # Reusing a session never re-titles it.
+    assert fake.titles == []
 
 
 async def test_empty_input_rejected(aiohttp_client):
@@ -254,6 +295,7 @@ async def test_stream_creates_session_and_restreams(aiohttp_client):
     assert body.rstrip().endswith("data: {}")  # final 'done' frame
     assert fake.created == ["mdopp"]
     assert fake.turns == [("sess-1", "hi")]
+    assert fake.titles == [("sess-1", "hi")]
 
 
 async def test_stream_empty_input_rejected(aiohttp_client):

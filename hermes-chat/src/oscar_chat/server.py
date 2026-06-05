@@ -20,6 +20,16 @@ from oscar_chat.logging import log
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+def _title_from(text: str) -> str:
+    """Derive a short session title from the first user message.
+
+    Hermes leaves chat-created sessions title-null; we PATCH this in so the
+    list shows a meaningful label instead of a placeholder for every row.
+    """
+    snippet = " ".join(text.split())
+    return snippet[:57].rstrip() + "…" if len(snippet) > 60 else snippet
+
+
 def resolve_uid(request: web.Request, header: str, default_uid: str) -> str:
     """Map the Authelia trusted-proxy identity header to a Hermes uid.
 
@@ -95,6 +105,7 @@ def build_app(
             if not session_id:
                 session_id = await hermes.create_session(uid)
                 log.info("chat.session.created", uid=uid, session_id=session_id)
+                await hermes.set_title(session_id, _title_from(text))
             reply = await hermes.chat(session_id, text)
         except HermesError:
             return web.json_response(
@@ -130,6 +141,7 @@ def build_app(
             if not session_id:
                 session_id = await hermes.create_session(uid)
                 log.info("chat.session.created", uid=uid, session_id=session_id)
+                await hermes.set_title(session_id, _title_from(text))
             await _send_event(resp, "session", {"session_id": session_id})
             async for event in hermes.chat_stream(session_id, text):
                 await _send_event(resp, *_normalize(event))
