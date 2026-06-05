@@ -97,8 +97,7 @@ async def test_expired_session_recreated_once(monkeypatch):
         paths.append(request.url.path)
         if request.url.path == "/api/sessions":
             state["session_calls"] += 1
-            sid = "old" if state["session_calls"] == 1 else "new"
-            return httpx.Response(200, json={"id": sid})
+            return httpx.Response(200, json={"id": "new"})
         if request.url.path == "/api/sessions/old/chat":
             return httpx.Response(404, text="session expired")
         if request.url.path == "/api/sessions/new/chat":
