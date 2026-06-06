@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 from aiohttp import web
 
 from solilos_chat import personalities, skills
@@ -63,6 +64,8 @@ def build_app(
     admin_group: str = "admins",
     skills_dir: str = "/data/skills",
     soul_path: str = "/data/SOUL.md",
+    config_agent_url: str = "http://127.0.0.1:8650",
+    agent_token: str = "",
 ) -> web.Application:
     async def index(_request: web.Request) -> web.Response:
         return web.FileResponse(STATIC_DIR / "index.html")
@@ -130,6 +133,33 @@ def build_app(
         except OSError:
             return web.json_response({"ok": False, "reason": "not_found"}, status=404)
         return web.json_response({"ok": True, "soul": {"content": content}})
+
+    async def put_soul(request: web.Request) -> web.Response:
+        if not is_admin(request, remote_groups_header, admin_group):
+            return web.json_response({"ok": False, "reason": "forbidden"}, status=403)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — any malformed JSON
+            return web.json_response(
+                {"ok": False, "reason": "invalid_json"}, status=400
+            )
+        content = body.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return web.json_response(
+                {"ok": False, "reason": "empty_content"}, status=400
+            )
+        # The chat pod can't write Hermes' data dir; the privileged sidecar
+        # in the hermes pod does it. SOUL.md reloads live, so no restart.
+        ok = await _agent_put_soul(config_agent_url, agent_token, content)
+        if not ok:
+            return web.json_response(
+                {"ok": False, "reason": "agent_unavailable"}, status=502
+            )
+        log.info(
+            "chat.soul.edited",
+            uid=resolve_uid(request, remote_user_header, default_uid),
+        )
+        return web.json_response({"ok": True})
 
     async def list_sessions(request: web.Request) -> web.Response:
         uid = resolve_uid(request, remote_user_header, default_uid)
@@ -246,6 +276,7 @@ def build_app(
     app.router.add_get("/api/skills/{skill_id}", get_skill)
     app.router.add_put("/api/skills/{skill_id}", put_skill)
     app.router.add_get("/api/soul", get_soul)
+    app.router.add_put("/api/soul", put_soul)
     app.router.add_get("/api/sessions", list_sessions)
     app.router.add_post("/api/sessions", create_session)
     app.router.add_get("/api/sessions/{session_id}", get_session)
@@ -266,6 +297,28 @@ async def _personality_from(request: web.Request) -> str | None:
     except Exception:  # noqa: BLE001 — body-less or malformed = default
         return None
     return body.get("personality") if isinstance(body, dict) else None
+
+
+async def _agent_put_soul(agent_url: str, token: str, content: str) -> bool:
+    """Ask the hermes-pod config sidecar to write SOUL.md. True on 2xx."""
+    url = f"{agent_url.rstrip('/')}/soul"
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            async with client.put(url, json={"content": content}, headers=headers) as r:
+                if r.status < 400:
+                    return True
+                detail = (await r.text())[:300]
+                log.error(
+                    "chat.agent.error", op="put_soul", status=r.status, body=detail
+                )
+                return False
+    except (aiohttp.ClientError, TimeoutError, OSError) as e:
+        log.error("chat.agent.unreachable", op="put_soul", error=str(e))
+        return False
 
 
 async def _send_event(
@@ -309,6 +362,8 @@ async def serve(
     admin_group: str = "admins",
     skills_dir: str = "/data/skills",
     soul_path: str = "/data/SOUL.md",
+    config_agent_url: str = "http://127.0.0.1:8650",
+    agent_token: str = "",
 ) -> None:
     app = build_app(
         hermes=hermes,
@@ -318,6 +373,8 @@ async def serve(
         admin_group=admin_group,
         skills_dir=skills_dir,
         soul_path=soul_path,
+        config_agent_url=config_agent_url,
+        agent_token=agent_token,
     )
     runner = web.AppRunner(app)
     await runner.setup()

@@ -26,6 +26,8 @@ def main() -> None:
             admin_group=settings.admin_group,
             skills_dir=settings.skills_dir,
             soul_path=settings.soul_path,
+            config_agent_url=settings.config_agent_url,
+            agent_token=settings.hermes_token,
         )
     )
 

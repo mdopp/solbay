@@ -70,6 +70,11 @@ spec:
       value: "/data/skills"
     - name: SOUL_PATH
       value: "/data/SOUL.md"
+    # The config sidecar in the hermes pod (loopback; both pods hostNetwork).
+    # Admin soul/model writes proxy here because the chat pod can't write
+    # Hermes' own data dir. Auth reuses API_SERVER_KEY (above).
+    - name: CONFIG_AGENT_URL
+      value: "{{CONFIG_AGENT_URL}}"
     - name: TZ
       value: "{{TZ}}"
     # No `ports:` block — hostNetwork pod, the listener binds the host

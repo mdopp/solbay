@@ -8,6 +8,16 @@
     "type": "secret",
     "description": "Bearer token clients send as `Authorization: Bearer <key>` on requests to Hermes' API. Auto-generated; the wizard surfaces it as a credential so operators can paste it into Solilos's `solbay` config (or any other client). Regenerate from the wizard if it leaks."
   },
+  "CONFIG_AGENT_IMAGE": {
+    "type": "text",
+    "description": "Image for the Solilos config sidecar that runs in the hermes pod (applies admin soul/model edits from the chat panel — the public chat pod can't write Hermes' data dir). Reuses the solilos-chat image with a different entrypoint. Leave default unless running a fork PoC.",
+    "default": "ghcr.io/mdopp/solilos-chat:latest"
+  },
+  "CONFIG_AGENT_PORT": {
+    "type": "text",
+    "description": "Host loopback port the config sidecar binds (the chat pod reaches it here via host loopback; both pods are hostNetwork). Default 8650; change only if it clashes.",
+    "default": "8650"
+  },
   "HERMES_LLM_PROVIDER_URL": {
     "type": "text",
     "description": "OpenAI-compatible LLM endpoint Hermes calls. Default points at the `ollama` template on the same host (127.0.0.1:11434 is reachable because both pods are hostNetwork). Override to point at a remote vLLM, a different Ollama, or a cloud provider — the post-deploy script writes this into Hermes' config.yaml.",

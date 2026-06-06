@@ -183,6 +183,35 @@ spec:
     - mountPath: /opt/data/notes
       name: syncthing-notes
 
+  # Privileged config sidecar (Solilos). The public chat pod can't write
+  # Hermes' own data dir (0700, owned by a foreign subuid), so an admin's
+  # soul edit from the panel is applied here instead: this container runs as
+  # the hermes user (10000) — owning /opt/data — and exposes a loopback-only
+  # API the chat pod calls with the shared Hermes API key (no new secret).
+  # SOUL.md is read fresh per message, so a soul edit takes effect live, no
+  # restart. Reuses the solilos-chat image with a different entrypoint;
+  # model switching (which needs a restart) joins this agent later.
+  - name: config-agent
+    image: "{{CONFIG_AGENT_IMAGE}}"
+    command: ["python", "-m", "solilos_chat.config_agent"]
+    securityContext:
+      runAsUser: 10000
+      runAsGroup: 10000
+    env:
+    - name: AGENT_HOST
+      value: "127.0.0.1"
+    - name: AGENT_PORT
+      value: "{{CONFIG_AGENT_PORT}}"
+    # Same key Hermes' API server uses; the chat pod presents it to reach
+    # this agent. No `ports:` block — loopback bind in a hostNetwork pod.
+    - name: API_SERVER_KEY
+      value: "{{HERMES_API_KEY}}"
+    - name: SOUL_PATH
+      value: "/opt/data/SOUL.md"
+    volumeMounts:
+    - mountPath: /opt/data
+      name: hermes-data
+
   volumes:
   - name: hermes-data
     hostPath:

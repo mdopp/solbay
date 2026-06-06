@@ -32,6 +32,11 @@
     "type": "secret",
     "description": "Bearer token the chat proxy presents when calling Hermes' native session API. Held server-side only — never sent to the browser. Surfaced as `__SB_CREDENTIAL__` by the ServiceBay `hermes` template's post-deploy; paste that value here (same name on both sides to avoid lookup confusion)."
   },
+  "CONFIG_AGENT_URL": {
+    "type": "text",
+    "description": "URL of the config sidecar running in the hermes pod (host loopback; both pods are hostNetwork). The panel proxies admin soul/model edits here because the chat pod can't write Hermes' own data dir. Must match the hermes template's CONFIG_AGENT_PORT (default 8650).",
+    "default": "http://127.0.0.1:8650"
+  },
   "DEFAULT_UID": {
     "type": "text",
     "description": "Hermes uid used when the Authelia `Remote-User` header is absent (e.g. direct loopback access for offline testing). Normal requests through NPM+Authelia carry the header and key off the SSO identity instead.",
