@@ -88,6 +88,21 @@ jobs:
       - run: pip install -e '.[test]'
       - run: pytest -q
 
+  test-templates:
+    name: pytest (templates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      # Post-deploy scripts are stdlib-only and loaded via importlib; pytest
+      # is the only dependency. Guards the hermes/solbay post-deploy logic
+      # (SB-MCP token self-heal, SOUL.md provisioning) that nothing else
+      # exercises in CI.
+      - run: pip install pytest
+      - run: pytest -q templates/tests
+
   semgrep:
     name: semgrep (report-only)
     runs-on: ubuntu-latest
