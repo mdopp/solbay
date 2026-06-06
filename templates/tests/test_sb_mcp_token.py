@@ -184,13 +184,14 @@ def test_household_collect_mints_when_existing_invalid(household, monkeypatch):
 
 
 def test_household_existing_token_parser_rejects_junk(household, monkeypatch):
-    monkeypatch.setattr(
-        household, "read_config_via_container", lambda: _CONFIG_WITH_JUNK
-    )
+    # solbay writes its entry under the `servicebay-mcp:` key (the live box
+    # config uses it), which is what existing_servicebay_mcp_token() parses —
+    # the shared fixture uses the hermes-side `servicebay:` key, so reshape it.
+    hh_junk = _CONFIG_WITH_JUNK.replace("servicebay:", "servicebay-mcp:")
+    hh_good = _CONFIG_WITH_GOOD.replace("servicebay:", "servicebay-mcp:")
+    monkeypatch.setattr(household, "read_config_via_container", lambda: hh_junk)
     assert household.existing_servicebay_mcp_token() is None
-    monkeypatch.setattr(
-        household, "read_config_via_container", lambda: _CONFIG_WITH_GOOD
-    )
+    monkeypatch.setattr(household, "read_config_via_container", lambda: hh_good)
     assert household.existing_servicebay_mcp_token() == GOOD
 
 
