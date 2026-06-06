@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/svg+xml" href="/static/sol-mark.svg" />
   <title>Solilos</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -113,6 +114,8 @@
       display: flex; align-items: center; justify-content: center;
       font-weight: 800; font-size: 16px; letter-spacing: -0.5px;
     }
+    .logo img { width: 22px; height: 22px; display: block; }
+    .topbar-logo { width: 22px; height: 22px; display: block; }
     .brand-name { font-weight: 700; font-size: 16px; letter-spacing: 0.2px; }
     .brand-ver { font-size: 11px; color: var(--muted); }
 
@@ -458,7 +461,7 @@
 <body>
   <aside class="rail">
     <div class="rail-head brand-home" id="brand-home" title="Back to chat">
-      <div class="logo">S</div>
+      <div class="logo"><img src="/static/sol-mark.svg" alt="Sol" /></div>
       <div>
         <div class="brand-name">Solilos</div>
         <div class="brand-ver" id="brand-ver"></div>
@@ -498,6 +501,7 @@
   <div class="main">
     <div class="topbar">
       <button class="icon-btn" id="rail-toggle" type="button" aria-label="Menu">☰</button>
+      <img class="topbar-logo" src="/static/sol-mark.svg" alt="" />
       <span class="brand-name">Solilos</span>
       <span class="grow"></span>
       <button class="icon-btn" id="topbar-settings" type="button" title="Settings" aria-label="Settings">⚙</button>
