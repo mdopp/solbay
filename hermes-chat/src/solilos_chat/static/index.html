@@ -377,11 +377,25 @@
       </section>
 
       <section id="view-soul" class="view">
-        <div class="pane">
+        <div class="reader-bar">
+          <span class="name">Soul</span>
+          <span class="grow"></span>
+          <button class="edit-btn" id="soul-edit" type="button" hidden>Edit</button>
+        </div>
+        <div class="pane" id="soul-view">
           <div class="doc">
-            <h2>Soul</h2>
-            <p class="lead">Sol's durable identity (SOUL.md). One soul — personalities are per-session overlays on top of it.</p>
+            <p class="lead">Sol's durable identity (SOUL.md). One soul — personalities are per-session overlays on top of it. Edits apply live, no restart.</p>
             <div class="md" id="soul-body"></div>
+          </div>
+        </div>
+        <div class="pane" id="soul-edit-pane" style="display:none;">
+          <div class="editor-wrap">
+            <textarea id="soul-editor" class="code-editor" spellcheck="false" aria-label="Soul source"></textarea>
+            <div class="editor-bar">
+              <button id="soul-save" type="button">Save</button>
+              <button id="soul-cancel" class="secondary" type="button">Cancel</button>
+              <span id="soul-status" class="editor-status"></span>
+            </div>
           </div>
         </div>
       </section>
@@ -858,20 +872,81 @@
       });
 
       // --- Soul -----------------------------------------------------------
+      var soulBody = document.getElementById("soul-body");
+      var soulView = document.getElementById("soul-view");
+      var soulEditPane = document.getElementById("soul-edit-pane");
+      var soulEditBtn = document.getElementById("soul-edit");
+      var soulEditor = document.getElementById("soul-editor");
+      var soulSave = document.getElementById("soul-save");
+      var soulCancel = document.getElementById("soul-cancel");
+      var soulStatus = document.getElementById("soul-status");
+      var currentSoulRaw = "";
+
+      function soulViewMode() {
+        soulEditPane.style.display = "none";
+        soulView.style.display = "block";
+        soulEditBtn.hidden = !isAdmin;
+      }
+      function setSoulStatus(msg, kind) {
+        soulStatus.className = "editor-status" + (kind ? " " + kind : "");
+        soulStatus.textContent = msg || "";
+      }
+
       function loadSoul() {
-        var body = document.getElementById("soul-body");
         return fetch("/api/soul")
           .then(function (r) { return r.ok ? r.json() : { soul: { content: "" } }; })
           .then(function (j) {
-            var content = (j && j.soul && j.soul.content) || "";
-            body.innerHTML = content
-              ? window.renderMarkdown(content)
+            currentSoulRaw = (j && j.soul && j.soul.content) || "";
+            soulBody.innerHTML = currentSoulRaw
+              ? window.renderMarkdown(currentSoulRaw)
               : '<p class="empty-note">No soul document found.</p>';
+            setSoulStatus("");
+            soulViewMode();
           })
           .catch(function () {
-            body.innerHTML = '<p class="empty-note">Could not load the soul document.</p>';
+            soulBody.innerHTML = '<p class="empty-note">Could not load the soul document.</p>';
           });
       }
+
+      soulEditBtn.addEventListener("click", function () {
+        soulEditor.value = currentSoulRaw;
+        setSoulStatus("");
+        soulView.style.display = "none";
+        soulEditBtn.hidden = true;
+        soulEditPane.style.display = "block";
+        soulEditor.focus();
+      });
+      soulCancel.addEventListener("click", soulViewMode);
+      soulSave.addEventListener("click", function () {
+        var content = soulEditor.value;
+        if (!content.trim()) { setSoulStatus("Can't save an empty soul.", "err"); return; }
+        soulSave.disabled = true;
+        setSoulStatus("Saving…");
+        fetch("/api/soul", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: content })
+        })
+          .then(function (r) {
+            if (r.status === 403) throw new Error("forbidden");
+            if (!r.ok) throw new Error("save failed");
+            return r.json();
+          })
+          .then(function () {
+            return loadSoul().then(function () {
+              setSoulStatus("Saved. Live now — Sol uses it on the next message.", "ok");
+            });
+          })
+          .catch(function (e) {
+            setSoulStatus(
+              e.message === "forbidden"
+                ? "Only admins can edit the soul."
+                : "Could not save. Please try again.",
+              "err"
+            );
+          })
+          .finally(function () { soulSave.disabled = false; });
+      });
 
       loadPersonalities();
       loadWhoami();

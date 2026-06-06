@@ -23,6 +23,7 @@ class Settings:
     default_uid: str
     skills_dir: str
     soul_path: str
+    config_agent_url: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -51,6 +52,12 @@ class Settings:
             # from disk because Hermes exposes no body/soul API.
             skills_dir=os.environ.get("SKILLS_DIR", "/data/skills"),
             soul_path=os.environ.get("SOUL_PATH", "/data/SOUL.md"),
+            # The privileged config sidecar inside the hermes pod (loopback);
+            # the panel proxies admin soul writes here because the chat pod
+            # can't write Hermes' own data dir. Auth reuses API_SERVER_KEY.
+            config_agent_url=os.environ.get(
+                "CONFIG_AGENT_URL", "http://127.0.0.1:8650"
+            ),
         )
 
 

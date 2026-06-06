@@ -611,6 +611,85 @@ async def test_soul_endpoint_missing(aiohttp_client, tmp_path):
     assert resp.status == 404
 
 
+# --- Soul edit (admin, proxied to the config sidecar) ---------------------
+
+
+async def test_put_soul_admin_proxies_to_agent(aiohttp_client, monkeypatch):
+    from solilos_chat import server as server_mod
+
+    calls = []
+
+    async def fake_agent(url, token, content):
+        calls.append((url, token, content))
+        return True
+
+    monkeypatch.setattr(server_mod, "_agent_put_soul", fake_agent)
+    app = build_app(
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        config_agent_url="http://agent:8650",
+        agent_token="k",
+    )
+    client = await aiohttp_client(app)
+
+    resp = await client.put(
+        "/api/soul", json={"content": "# Sol\nnew"}, headers={"Remote-Groups": "admins"}
+    )
+    assert resp.status == 200
+    assert calls == [("http://agent:8650", "k", "# Sol\nnew")]
+
+
+async def test_put_soul_non_admin_forbidden_no_agent_call(aiohttp_client, monkeypatch):
+    from solilos_chat import server as server_mod
+
+    called = []
+
+    async def fake_agent(url, token, content):
+        called.append(1)
+        return True
+
+    monkeypatch.setattr(server_mod, "_agent_put_soul", fake_agent)
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+
+    resp = await client.put(
+        "/api/soul", json={"content": "x"}, headers={"Remote-Groups": "family"}
+    )
+    assert resp.status == 403
+    assert called == []  # the write never reached the agent
+
+
+async def test_put_soul_empty_rejected(aiohttp_client):
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+    resp = await client.put(
+        "/api/soul", json={"content": "  "}, headers={"Remote-Groups": "admins"}
+    )
+    assert resp.status == 400
+
+
+async def test_put_soul_agent_failure_is_502(aiohttp_client, monkeypatch):
+    from solilos_chat import server as server_mod
+
+    async def fake_agent(url, token, content):
+        return False
+
+    monkeypatch.setattr(server_mod, "_agent_put_soul", fake_agent)
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+    resp = await client.put(
+        "/api/soul", json={"content": "x"}, headers={"Remote-Groups": "admins"}
+    )
+    assert resp.status == 502
+
+
 # --- Skill edit (admin) ---------------------------------------------------
 
 
