@@ -253,6 +253,11 @@
       font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line);
       border-radius: 8px; background: var(--bg); color: var(--ink);
     }
+    /* The native dropdown list inherits the OS default (white) otherwise —
+       force a solid dark surface so options aren't white-on-white in dark mode. */
+    select option, select optgroup {
+      background-color: var(--panel-solid); color: var(--ink);
+    }
     .composer-row .hint { color: var(--muted); font-size: 12px; margin-left: auto; }
     .btn-primary { border-radius: var(--radius); padding: 0 18px; background: var(--accent-grad); color: var(--accent-ink); font-weight: 600; box-shadow: 0 6px 16px -4px rgba(249, 115, 22, 0.4); transition: transform .25s var(--ease), box-shadow .25s var(--ease), opacity .2s; }
     .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 10px 22px -6px rgba(249, 115, 22, 0.5); }
