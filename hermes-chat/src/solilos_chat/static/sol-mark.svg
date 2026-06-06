@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Sol">
+  <defs>
+    <!-- warm "Sol" body, lit from within (matches the panel's orange→amber accent) -->
+    <radialGradient id="solGold" cx="50%" cy="38%" r="66%">
+      <stop offset="0%" stop-color="#fff0cc"/>
+      <stop offset="40%" stop-color="#fbbf24"/>
+      <stop offset="78%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#c2410c"/>
+    </radialGradient>
+    <radialGradient id="solGlow" cx="50%" cy="42%" r="55%">
+      <stop offset="0%" stop-color="#fff3d6" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#fff3d6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- the inner light -->
+  <ellipse cx="32" cy="34" rx="11" ry="20" fill="url(#solGlow)"/>
+  <!-- the figure (the "i"): a standing person, lit from within -->
+  <circle cx="32" cy="19.5" r="6.6" fill="url(#solGold)"/>
+  <path fill="url(#solGold)" d="M32 27
+    C 37.6 27 40.7 31.2 41.2 37
+    C 41.9 45 39.7 52.2 38.1 56.2
+    C 37.4 58 35 59 32 59
+    C 29 59 26.6 58 25.9 56.2
+    C 24.3 52.2 22.1 45 22.8 37
+    C 23.3 31.2 26.4 27 32 27 Z"/>
+</svg>

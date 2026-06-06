@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 510 175" role="img" aria-label="solilos">
+  <defs>
+    <radialGradient id="solGold" cx="50%" cy="38%" r="66%">
+      <stop offset="0%" stop-color="#fff0cc"/>
+      <stop offset="40%" stop-color="#fbbf24"/>
+      <stop offset="78%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#c2410c"/>
+    </radialGradient>
+    <radialGradient id="solGlow" cx="50%" cy="42%" r="55%">
+      <stop offset="0%" stop-color="#fff3d6" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#fff3d6" stop-opacity="0"/>
+    </radialGradient>
+    <!-- one "s" glyph, reused at both ends (solilos is a palindrome) -->
+    <path id="solS" fill="none" d="M 22 76
+      C 22 65 13 60 0 60 C -13 60 -22 65 -22 75
+      C -22 84 -13 88 0 93 C 13 98 22 102 22 112
+      C 22 123 13 128 0 128 C -13 128 -22 123 -22 113"/>
+  </defs>
+
+  <!-- letters: deep slate, rounded geometric strokes (currentColor-friendly) -->
+  <g fill="none" stroke="#1e293b" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
+    <use href="#solS" transform="translate(68,0)"/>
+    <circle cx="147" cy="94" r="33"/>
+    <line x1="205" y1="42" x2="205" y2="130"/>
+    <line x1="305" y1="42" x2="305" y2="130"/>
+    <circle cx="363" cy="94" r="33"/>
+    <use href="#solS" transform="translate(442,0)"/>
+  </g>
+
+  <!-- the "i": a standing figure, lit from within, on the mirror axis -->
+  <ellipse cx="255" cy="92" rx="9" ry="22" fill="url(#solGlow)"/>
+  <circle cx="255" cy="56" r="13" fill="url(#solGold)"/>
+  <path fill="url(#solGold)" d="M255 75
+    C 266 75 272 82 273 93
+    C 274 109 270 122 267 129
+    C 266 132 261 134 255 134
+    C 249 134 244 132 243 129
+    C 240 122 236 109 237 93
+    C 238 82 244 75 255 75 Z"/>
+</svg>
