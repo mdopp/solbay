@@ -690,6 +690,101 @@ async def test_put_soul_agent_failure_is_502(aiohttp_client, monkeypatch):
     assert resp.status == 502
 
 
+# --- Model switch (admin, proxied to the config sidecar) ------------------
+
+
+async def test_get_model_admin(aiohttp_client, monkeypatch):
+    from solilos_chat import server as server_mod
+
+    async def fake_get(url, token):
+        return {"current": "gemma4:e4b", "available": ["gemma4:e4b", "llama3:8b"]}
+
+    monkeypatch.setattr(server_mod, "_agent_get_model", fake_get)
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+    resp = await client.get("/api/model", headers={"Remote-Groups": "admins"})
+    body = await resp.json()
+    assert resp.status == 200
+    assert body["current"] == "gemma4:e4b"
+    assert body["available"] == ["gemma4:e4b", "llama3:8b"]
+
+
+async def test_get_model_non_admin_forbidden(aiohttp_client):
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+    resp = await client.get("/api/model", headers={"Remote-Groups": "family"})
+    assert resp.status == 403
+
+
+async def test_put_model_admin_proxies(aiohttp_client, monkeypatch):
+    from solilos_chat import server as server_mod
+
+    calls = []
+
+    async def fake_put(url, token, model):
+        calls.append((url, token, model))
+        return {"ok": True, "restarted": True}
+
+    monkeypatch.setattr(server_mod, "_agent_put_model", fake_put)
+    app = build_app(
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        config_agent_url="http://agent:8650",
+        agent_token="k",
+    )
+    client = await aiohttp_client(app)
+    resp = await client.put(
+        "/api/model", json={"model": "llama3:8b"}, headers={"Remote-Groups": "admins"}
+    )
+    body = await resp.json()
+    assert resp.status == 200
+    assert body == {"ok": True, "restarted": True}
+    assert calls == [("http://agent:8650", "k", "llama3:8b")]
+
+
+async def test_put_model_non_admin_forbidden_no_call(aiohttp_client, monkeypatch):
+    from solilos_chat import server as server_mod
+
+    called = []
+
+    async def fake_put(url, token, model):
+        called.append(1)
+        return {"ok": True}
+
+    monkeypatch.setattr(server_mod, "_agent_put_model", fake_put)
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+    resp = await client.put(
+        "/api/model", json={"model": "x"}, headers={"Remote-Groups": "family"}
+    )
+    assert resp.status == 403
+    assert called == []
+
+
+async def test_put_model_agent_failure_is_502(aiohttp_client, monkeypatch):
+    from solilos_chat import server as server_mod
+
+    async def fake_put(url, token, model):
+        return None
+
+    monkeypatch.setattr(server_mod, "_agent_put_model", fake_put)
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+    resp = await client.put(
+        "/api/model", json={"model": "x"}, headers={"Remote-Groups": "admins"}
+    )
+    assert resp.status == 502
+
+
 # --- Skill edit (admin) ---------------------------------------------------
 
 

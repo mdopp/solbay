@@ -161,6 +161,52 @@ def build_app(
         )
         return web.json_response({"ok": True})
 
+    async def get_model(request: web.Request) -> web.Response:
+        # Admin-only: the switch is an admin control and listing models is
+        # part of it; the panel only shows this to admins.
+        if not is_admin(request, remote_groups_header, admin_group):
+            return web.json_response({"ok": False, "reason": "forbidden"}, status=403)
+        data = await _agent_get_model(config_agent_url, agent_token)
+        if data is None:
+            return web.json_response(
+                {"ok": False, "reason": "agent_unavailable"}, status=502
+            )
+        return web.json_response(
+            {
+                "ok": True,
+                "current": data.get("current", ""),
+                "available": data.get("available", []),
+            }
+        )
+
+    async def put_model(request: web.Request) -> web.Response:
+        if not is_admin(request, remote_groups_header, admin_group):
+            return web.json_response({"ok": False, "reason": "forbidden"}, status=403)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — any malformed JSON
+            return web.json_response(
+                {"ok": False, "reason": "invalid_json"}, status=400
+            )
+        model = body.get("model")
+        if not isinstance(model, str) or not model.strip():
+            return web.json_response({"ok": False, "reason": "empty_model"}, status=400)
+        # Persistent change: the sidecar rewrites config.yaml and restarts
+        # Hermes (so it's admin-gated, per the panel's access model).
+        result = await _agent_put_model(config_agent_url, agent_token, model.strip())
+        if result is None:
+            return web.json_response(
+                {"ok": False, "reason": "agent_unavailable"}, status=502
+            )
+        log.info(
+            "chat.model.set",
+            uid=resolve_uid(request, remote_user_header, default_uid),
+            model=model.strip(),
+        )
+        return web.json_response(
+            {"ok": True, "restarted": bool(result.get("restarted"))}
+        )
+
     async def list_sessions(request: web.Request) -> web.Response:
         uid = resolve_uid(request, remote_user_header, default_uid)
         try:
@@ -277,6 +323,8 @@ def build_app(
     app.router.add_put("/api/skills/{skill_id}", put_skill)
     app.router.add_get("/api/soul", get_soul)
     app.router.add_put("/api/soul", put_soul)
+    app.router.add_get("/api/model", get_model)
+    app.router.add_put("/api/model", put_model)
     app.router.add_get("/api/sessions", list_sessions)
     app.router.add_post("/api/sessions", create_session)
     app.router.add_get("/api/sessions/{session_id}", get_session)
@@ -299,16 +347,22 @@ async def _personality_from(request: web.Request) -> str | None:
     return body.get("personality") if isinstance(body, dict) else None
 
 
-async def _agent_put_soul(agent_url: str, token: str, content: str) -> bool:
-    """Ask the hermes-pod config sidecar to write SOUL.md. True on 2xx."""
-    url = f"{agent_url.rstrip('/')}/soul"
+def _agent_headers(token: str) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+async def _agent_put_soul(agent_url: str, token: str, content: str) -> bool:
+    """Ask the hermes-pod config sidecar to write SOUL.md. True on 2xx."""
+    url = f"{agent_url.rstrip('/')}/soul"
     try:
         timeout = aiohttp.ClientTimeout(total=15)
         async with aiohttp.ClientSession(timeout=timeout) as client:
-            async with client.put(url, json={"content": content}, headers=headers) as r:
+            async with client.put(
+                url, json={"content": content}, headers=_agent_headers(token)
+            ) as r:
                 if r.status < 400:
                     return True
                 detail = (await r.text())[:300]
@@ -319,6 +373,45 @@ async def _agent_put_soul(agent_url: str, token: str, content: str) -> bool:
     except (aiohttp.ClientError, TimeoutError, OSError) as e:
         log.error("chat.agent.unreachable", op="put_soul", error=str(e))
         return False
+
+
+async def _agent_get_model(agent_url: str, token: str) -> dict[str, Any] | None:
+    """Read {current, available} from the sidecar. None on failure."""
+    url = f"{agent_url.rstrip('/')}/model"
+    try:
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            async with client.get(url, headers=_agent_headers(token)) as r:
+                if r.status >= 400:
+                    return None
+                return await r.json()
+    except (aiohttp.ClientError, TimeoutError, OSError, ValueError) as e:
+        log.error("chat.agent.unreachable", op="get_model", error=str(e))
+        return None
+
+
+async def _agent_put_model(
+    agent_url: str, token: str, model: str
+) -> dict[str, Any] | None:
+    """Ask the sidecar to set the model (it restarts Hermes). The agent's
+    JSON ({ok, restarted}) on 2xx, None otherwise."""
+    url = f"{agent_url.rstrip('/')}/model"
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            async with client.put(
+                url, json={"model": model}, headers=_agent_headers(token)
+            ) as r:
+                if r.status >= 400:
+                    detail = (await r.text())[:300]
+                    log.error(
+                        "chat.agent.error", op="put_model", status=r.status, body=detail
+                    )
+                    return None
+                return await r.json()
+    except (aiohttp.ClientError, TimeoutError, OSError, ValueError) as e:
+        log.error("chat.agent.unreachable", op="put_model", error=str(e))
+        return None
 
 
 async def _send_event(
