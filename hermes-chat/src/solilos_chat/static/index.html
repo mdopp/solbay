@@ -314,6 +314,16 @@
       .editor-status.warn { color: #e0a458; }
       .editor-status.err { color: #e08585; }
     }
+
+    /* Model switch. */
+    .model-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+    .model-row label { color: var(--muted); font-size: 13px; }
+    .model-row select {
+      font: inherit; font-size: 14px; padding: 6px 9px;
+      border: 1px solid var(--line); border-radius: 8px;
+      background: var(--bg); color: var(--ink); min-width: 220px;
+    }
+    .model-current { color: var(--muted); font-size: 13px; margin: 4px 0 12px; }
   </style>
 </head>
 <body>
@@ -332,6 +342,7 @@
           <button type="button" data-view="chat" class="active">Chat</button>
           <button type="button" data-view="skills">Skills</button>
           <button type="button" data-view="soul">Soul</button>
+          <button type="button" data-view="model" id="nav-model" hidden>Model</button>
         </nav>
         <span class="grow"></span>
         <span class="persona">
@@ -396,6 +407,22 @@
               <button id="soul-cancel" class="secondary" type="button">Cancel</button>
               <span id="soul-status" class="editor-status"></span>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-model" class="view">
+        <div class="pane">
+          <div class="doc">
+            <h2>Model</h2>
+            <p class="lead">The language model Sol runs on (admin only). Switching it is persistent and restarts Hermes — Sol is briefly unavailable while it reloads.</p>
+            <div class="model-row">
+              <label for="model-select">Model</label>
+              <select id="model-select"></select>
+              <button id="model-apply" type="button">Apply</button>
+            </div>
+            <p class="model-current" id="model-current"></p>
+            <span class="editor-status" id="model-status"></span>
           </div>
         </div>
       </section>
@@ -715,7 +742,11 @@
           .then(function (r) { return r.ok ? r.json() : {}; })
           .then(function (j) {
             isAdmin = !!(j && j.is_admin);
-            if (isAdmin) adminBadge.hidden = false;
+            if (isAdmin) {
+              adminBadge.hidden = false;
+              var navModel = document.getElementById("nav-model");
+              if (navModel) navModel.hidden = false;
+            }
           })
           .catch(function () {});
       }
@@ -724,7 +755,8 @@
       var views = {
         chat: document.getElementById("view-chat"),
         skills: document.getElementById("view-skills"),
-        soul: document.getElementById("view-soul")
+        soul: document.getElementById("view-soul"),
+        model: document.getElementById("view-model")
       };
       var navBtns = document.querySelectorAll("#nav button");
       var skillsLoaded = false, soulLoaded = false;
@@ -738,6 +770,7 @@
         });
         if (name === "skills" && !skillsLoaded) { skillsLoaded = true; loadSkills(); }
         if (name === "soul" && !soulLoaded) { soulLoaded = true; loadSoul(); }
+        if (name === "model") { loadModel(); }  // always refresh (current can change)
         closeSidebar();
       }
       navBtns.forEach(function (b) {
@@ -946,6 +979,75 @@
             );
           })
           .finally(function () { soulSave.disabled = false; });
+      });
+
+      // --- Model (admin) --------------------------------------------------
+      var modelSelect = document.getElementById("model-select");
+      var modelApply = document.getElementById("model-apply");
+      var modelCurrent = document.getElementById("model-current");
+      var modelStatus = document.getElementById("model-status");
+
+      function loadModel() {
+        modelStatus.className = "editor-status";
+        modelStatus.textContent = "";
+        return fetch("/api/model")
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) {
+            if (!j) {
+              modelCurrent.textContent = "Could not reach the config service.";
+              return;
+            }
+            var current = j.current || "";
+            var avail = j.available || [];
+            modelCurrent.textContent = current
+              ? "Current: " + current
+              : "Current model unknown.";
+            modelSelect.textContent = "";
+            // Always include the current model even if Ollama didn't list it.
+            if (current && avail.indexOf(current) === -1) avail = [current].concat(avail);
+            if (!avail.length) avail = current ? [current] : [];
+            avail.forEach(function (m) {
+              var opt = document.createElement("option");
+              opt.value = m; opt.textContent = m;
+              if (m === current) opt.selected = true;
+              modelSelect.appendChild(opt);
+            });
+            modelApply.disabled = avail.length < 2;
+          })
+          .catch(function () {
+            modelCurrent.textContent = "Could not reach the config service.";
+          });
+      }
+
+      modelApply.addEventListener("click", function () {
+        var model = modelSelect.value;
+        if (!model) return;
+        modelApply.disabled = true;
+        modelStatus.className = "editor-status";
+        modelStatus.textContent = "Applying…";
+        fetch("/api/model", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: model })
+        })
+          .then(function (r) {
+            if (r.status === 403) throw new Error("forbidden");
+            if (!r.ok) throw new Error("failed");
+            return r.json();
+          })
+          .then(function (j) {
+            modelStatus.className = "editor-status warn";
+            modelStatus.textContent = j.restarted
+              ? "Set to " + model + ". Hermes is restarting — Sol is back in a moment."
+              : "Set to " + model + ".";
+          })
+          .catch(function (e) {
+            modelStatus.className = "editor-status err";
+            modelStatus.textContent = e.message === "forbidden"
+              ? "Only admins can switch the model."
+              : "Could not switch the model. Please try again.";
+          })
+          .finally(function () { modelApply.disabled = false; });
       });
 
       loadPersonalities();

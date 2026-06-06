@@ -208,6 +208,15 @@ spec:
       value: "{{HERMES_API_KEY}}"
     - name: SOUL_PATH
       value: "/opt/data/SOUL.md"
+    # Model switch: read config.yaml's model.model, list Ollama tags, and on
+    # change rewrite config.yaml + restart Hermes using the SB-MCP token
+    # already in config.yaml (read+lifecycle scope) — no new credential.
+    - name: CONFIG_PATH
+      value: "/opt/data/config.yaml"
+    - name: OLLAMA_URL
+      value: "{{HERMES_LLM_PROVIDER_URL}}"
+    - name: HERMES_SERVICE
+      value: "hermes"
     volumeMounts:
     - mountPath: /opt/data
       name: hermes-data
