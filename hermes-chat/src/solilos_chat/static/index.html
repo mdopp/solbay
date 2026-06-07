@@ -210,7 +210,14 @@
     .msg.sol { align-self: flex-start; background: var(--bubble-sol); }
     .msg.system { align-self: center; color: var(--muted); background: none; font-size: 13px; padding: 4px; }
     .msg.info { align-self: flex-start; background: var(--accent-soft); }
-    .role { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+    /* Subtle per-message footer: HH:MM timestamp (+ date when not today),
+       and on Sol's replies the round-trip latency. */
+    .meta {
+      display: block; margin-top: 5px; font-size: 11px; color: var(--muted);
+      letter-spacing: 0.2px; opacity: 0.75;
+    }
+    .msg.me .meta { text-align: right; }
+    .meta .took { font-variant-numeric: tabular-nums; }
 
     .md > :first-child { margin-top: 0; }
     .md > :last-child { margin-bottom: 0; }
@@ -226,6 +233,8 @@
     }
     .md pre { margin: 0 0 8px; padding: 10px 12px; background: rgba(127,127,127,0.14); border-radius: 8px; overflow-x: auto; }
     .md pre code { background: none; padding: 0; font-size: 0.9em; }
+    .md pre.mermaid-rendered { background: none; padding: 4px 0; text-align: center; }
+    .md pre.mermaid-rendered svg { max-width: 100%; height: auto; }
     .md blockquote { margin: 0 0 8px; padding: 2px 12px; border-left: 3px solid var(--line); color: var(--muted); }
     .md hr { border: none; border-top: 1px solid var(--line); margin: 10px 0; }
 
@@ -262,6 +271,27 @@
     .btn-primary { border-radius: var(--radius); padding: 0 18px; background: var(--accent-grad); color: var(--accent-ink); font-weight: 600; box-shadow: 0 6px 16px -4px rgba(249, 115, 22, 0.4); transition: transform .25s var(--ease), box-shadow .25s var(--ease), opacity .2s; }
     .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 10px 22px -6px rgba(249, 115, 22, 0.5); }
     .btn-primary:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
+
+    /* Slash-command autocomplete overlay (anchored above the composer). */
+    #composer { position: relative; }
+    .slash-menu {
+      position: absolute; left: 18px; right: 18px; bottom: calc(100% + 6px);
+      max-height: 280px; overflow-y: auto; z-index: 40;
+      background: var(--panel-solid); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow-panel);
+      padding: 6px;
+    }
+    .slash-item {
+      display: flex; align-items: baseline; gap: 10px;
+      padding: 7px 10px; border-radius: 8px; cursor: pointer;
+    }
+    .slash-item .cmd {
+      font-family: "Geist Mono", ui-monospace, Menlo, Consolas, monospace;
+      font-size: 13px; color: var(--ink); font-weight: 500; flex: 0 0 auto;
+    }
+    .slash-item .cmd-desc { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .slash-item.active { background: var(--accent-soft); }
+    .slash-item.active .cmd { color: var(--accent); }
 
     .pane { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 24px 16px; }
     .pane > * { max-width: 1024px; margin-left: auto; margin-right: auto; }
@@ -563,6 +593,7 @@
         <span class="hint">Type <code>/help</code> for commands</span>
       </div>
       <form id="composer">
+        <div class="slash-menu" id="slash-menu" role="listbox" aria-label="Commands" hidden></div>
         <textarea id="input" rows="1" placeholder="Message Sol…  (/help for commands)" autofocus></textarea>
         <button id="send" class="btn-primary" type="submit">Send</button>
       </form>
@@ -649,6 +680,7 @@
   </div>
 
   <script src="/static/markdown.js"></script>
+  <script src="/static/mermaid.min.js"></script>
   <script>
     (function () {
       var log = document.getElementById("log");
@@ -661,8 +693,37 @@
       var personalitySel = document.getElementById("personality");
       var adminBadge = document.getElementById("admin-badge");
       var sessionId = null;
+      var slash = { refresh: function () {}, handleKey: function () { return false; } };
 
       function currentPersonality() { return personalitySel.value || "sol"; }
+
+      // ---- Mermaid (offline, bundled under /static) ----
+      var mermaidReady = false, mermaidSeq = 0;
+      if (window.mermaid) {
+        var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        try {
+          window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default" });
+          mermaidReady = true;
+        } catch (e) {}
+      }
+      // Draw any ```mermaid fenced blocks the markdown renderer left as
+      // <pre class="mermaid-src">. Each render is async; failures leave the raw
+      // source visible (a broken diagram shouldn't blank the message).
+      function renderMermaidIn(container) {
+        if (!mermaidReady || !container) return;
+        var srcs = container.querySelectorAll("pre.mermaid-src");
+        Array.prototype.forEach.call(srcs, function (pre) {
+          var code = pre.querySelector("code");
+          var def = (code ? code.textContent : pre.textContent) || "";
+          pre.className = "mermaid-rendered";
+          var id = "mmd-" + (++mermaidSeq);
+          window.mermaid.render(id, def).then(function (out) {
+            pre.innerHTML = out.svg;
+          }).catch(function () {
+            pre.className = ""; // restore as a plain code block on parse error
+          });
+        });
+      }
 
       // ---- Mobile drawer ----
       function openRail() { document.body.classList.add("rail-open"); }
@@ -674,16 +735,35 @@
       function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 40; }
       function scrollDown(stick) { if (stick) log.scrollTop = log.scrollHeight; }
 
-      function addText(role, text) {
+      // HH:MM, prefixed with a short date when the message isn't from today —
+      // enough to tell "15 min ago" from "last week", seconds omitted (#186).
+      function fmtStamp(when) {
+        var d = when instanceof Date ? when : (when ? new Date(when) : new Date());
+        if (isNaN(d.getTime())) d = new Date();
+        var time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        var now = new Date();
+        var sameDay = d.toDateString() === now.toDateString();
+        if (sameDay) return time;
+        return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + time;
+      }
+      function metaLine(when, tookMs) {
+        var m = document.createElement("span");
+        m.className = "meta";
+        m.textContent = fmtStamp(when);
+        if (tookMs != null) {
+          var t = document.createElement("span");
+          t.className = "took";
+          t.textContent = " · took " + (tookMs / 1000).toFixed(1) + "s";
+          m.appendChild(t);
+        }
+        return m;
+      }
+
+      function addText(role, text, when) {
         var el = document.createElement("div");
         el.className = "msg " + role;
-        if (role !== "system") {
-          var label = document.createElement("span");
-          label.className = "role";
-          label.textContent = role === "me" ? "You" : "Sol";
-          el.appendChild(label);
-        }
         el.appendChild(document.createTextNode(text));
+        if (role === "me" || role === "sol") el.appendChild(metaLine(when));
         log.appendChild(el);
         scrollDown(true);
         return el;
@@ -696,6 +776,7 @@
         var body = document.createElement("div");
         body.className = "md";
         body.innerHTML = window.renderMarkdown(markdown);
+        renderMermaidIn(body);
         el.appendChild(body);
         log.appendChild(el);
         scrollDown(true);
@@ -704,10 +785,6 @@
       function addAssistant() {
         var el = document.createElement("div");
         el.className = "msg sol";
-        var label = document.createElement("span");
-        label.className = "role";
-        label.textContent = "Sol";
-        el.appendChild(label);
         var activity = document.createElement("div");
         activity.className = "activity";
         activity.innerHTML =
@@ -720,6 +797,7 @@
         log.appendChild(el);
         scrollDown(true);
         var buffer = "";
+        var started = Date.now();
         return {
           setActivity: function (txt) { var t = activity.querySelector(".activity-text"); if (t) t.textContent = txt; },
           append: function (delta) {
@@ -733,6 +811,8 @@
             if (activity.parentNode) el.removeChild(activity);
             if (!buffer) body.textContent = "(no reply)";
             else body.innerHTML = window.renderMarkdown(buffer);
+            renderMermaidIn(body);
+            el.appendChild(metaLine(new Date(), Date.now() - started));
             scrollDown(atBottom());
           },
           fail: function (msg) { el.removeChild(activity); el.className = "msg system"; body.textContent = msg; }
@@ -743,8 +823,9 @@
         input.style.height = "auto";
         input.style.height = Math.min(input.scrollHeight, 168) + "px";
       }
-      input.addEventListener("input", autosize);
+      input.addEventListener("input", function () { autosize(); slash.refresh(); });
       input.addEventListener("keydown", function (e) {
+        if (slash.handleKey(e)) return; // arrow/enter/tab/esc while the menu is open
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
       });
 
@@ -827,6 +908,87 @@
         addInfo("Unknown command `/" + cmd + "`.\n\n" + helpMarkdown());
       }
 
+      // ---- Slash-command autocomplete (#181) ----
+      // Built-in browser commands plus the registered skills (/api/skills), so
+      // typing "/" surfaces both what the panel can do and what Sol knows.
+      slash = (function () {
+        var menu = document.getElementById("slash-menu");
+        var items = [];     // current filtered [{cmd, desc}]
+        var active = -1;
+        var skillEntries = [];
+
+        fetch("/api/skills")
+          .then(function (r) { return r.ok ? r.json() : { skills: [] }; })
+          .then(function (j) {
+            skillEntries = ((j && j.skills) || []).map(function (s) {
+              return ["/" + s.id, s.description || s.name || ""];
+            });
+          })
+          .catch(function () {});
+
+        function close() { menu.hidden = true; menu.textContent = ""; items = []; active = -1; }
+
+        function render(token) {
+          var q = token.slice(1).toLowerCase(); // text after "/"
+          var pool = COMMANDS.concat(skillEntries);
+          items = pool.filter(function (c) { return c[0].slice(1).toLowerCase().indexOf(q) === 0; });
+          if (!items.length) { close(); return; }
+          active = 0;
+          menu.textContent = "";
+          items.forEach(function (c, i) {
+            var row = document.createElement("div");
+            row.className = "slash-item" + (i === active ? " active" : "");
+            row.setAttribute("role", "option");
+            var cmd = document.createElement("span"); cmd.className = "cmd"; cmd.textContent = c[0];
+            var desc = document.createElement("span"); desc.className = "cmd-desc"; desc.textContent = c[1];
+            row.appendChild(cmd); row.appendChild(desc);
+            row.addEventListener("mousedown", function (e) { e.preventDefault(); choose(i); });
+            menu.appendChild(row);
+          });
+          menu.hidden = false;
+        }
+
+        function move(delta) {
+          if (!items.length) return;
+          var rows = menu.querySelectorAll(".slash-item");
+          if (rows[active]) rows[active].classList.remove("active");
+          active = (active + delta + items.length) % items.length;
+          rows[active].classList.add("active");
+          rows[active].scrollIntoView({ block: "nearest" });
+        }
+
+        function choose(i) {
+          var c = items[i];
+          if (!c) return;
+          input.value = c[0] + " ";
+          close();
+          autosize();
+          input.focus();
+        }
+
+        // Show only when the input is a single "/..."-token (no spaces) command.
+        function refresh() {
+          var v = input.value;
+          if (v.charAt(0) === "/" && v.indexOf(" ") === -1 && v.indexOf("\n") === -1) render(v);
+          else close();
+        }
+
+        function handleKey(e) {
+          if (menu.hidden) return false;
+          if (e.key === "ArrowDown") { e.preventDefault(); move(1); return true; }
+          if (e.key === "ArrowUp") { e.preventDefault(); move(-1); return true; }
+          if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); choose(active); return true; }
+          if (e.key === "Escape") { e.preventDefault(); close(); return true; }
+          return false;
+        }
+
+        document.addEventListener("click", function (e) {
+          if (!menu.hidden && e.target !== input && !menu.contains(e.target)) close();
+        });
+
+        return { refresh: refresh, handleKey: handleKey, close: close };
+      })();
+
       function showContext() {
         if (!sessionId) { addText("system", "Start a chat first — then /context shows its usage."); return; }
         fetch("/api/sessions/" + encodeURIComponent(sessionId))
@@ -849,6 +1011,7 @@
 
       form.addEventListener("submit", function (e) {
         e.preventDefault();
+        slash.close();
         var text = input.value.trim();
         if (!text) return;
         if (text.charAt(0) === "/") { input.value = ""; autosize(); handleCommand(text); return; }
@@ -936,17 +1099,17 @@
             sessionId = s.id || id;
             clearLog();
             (s.messages || []).forEach(function (m) {
-              if (m.role === "user") { addText("me", m.content); }
+              var ts = m.created_at || m.timestamp || m.created || null;
+              if (m.role === "user") { addText("me", m.content, ts); }
               else if (m.role === "assistant") {
                 var el = document.createElement("div");
                 el.className = "msg sol";
-                var label = document.createElement("span");
-                label.className = "role"; label.textContent = "Sol";
-                el.appendChild(label);
                 var body = document.createElement("div");
                 body.className = "md";
                 body.innerHTML = window.renderMarkdown(m.content);
+                renderMermaidIn(body);
                 el.appendChild(body);
+                if (ts) el.appendChild(metaLine(ts));
                 log.appendChild(el);
               }
             });
