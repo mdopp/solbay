@@ -813,6 +813,44 @@ def write_gateway_env(data_dir: str, entries: dict[str, str]) -> bool:
     return True
 
 
+def write_ddgs_install_script(data_dir: str) -> bool:
+    """Write the startup script to /etc/cont-init.d/99-install-ddgs (mounted path)
+    so the ddgs python package is automatically installed when the container boots.
+    Returns True when the file was written, False otherwise.
+    """
+    target = os.path.join(data_dir, "hermes", "99-install-ddgs")
+    script = (
+        "#!/bin/sh\n"
+        'if ! /opt/hermes/.venv/bin/python -c "import ddgs" >/dev/null 2>&1; then\n'
+        "    echo 'Installing ddgs library for DuckDuckGo Search...'\n"
+        "    /opt/hermes/bin/hermes tools post-setup ddgs || /opt/hermes/.venv/bin/pip install ddgs || true\n"
+        "fi\n"
+    )
+    if os.path.exists(target):
+        try:
+            with open(target, "r", encoding="utf-8") as f:
+                if f.read() == script:
+                    return False
+        except OSError:
+            pass
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(script)
+        os.chmod(target, 0o755)
+        jlog("info", "hermes:ddgs-script", "wrote ddgs install script", path=target)
+        return True
+    except OSError as e:
+        jlog(
+            "error",
+            "hermes:ddgs-script",
+            "could not write ddgs install script",
+            path=target,
+            error=str(e),
+        )
+        return False
+
+
 # #1002 — Timeouts read lazily so the test suite can shrink them via
 # env without import-order gymnastics. Mirrors the `LLDAP_READY_TIMEOUT`
 # pattern in templates/auth/post-deploy.py.
@@ -1034,9 +1072,18 @@ def main() -> int:
         },
     )
 
+    # Write the ddgs install script to the host's config dir so it runs on pod start.
+    ddgs_script_written = write_ddgs_install_script(data_dir)
+
     # 2. Restart so Hermes picks up the new config (and the new env if we
     # just patched HASS_TOKEN or rewrote .env).
-    if config_written or env_changed or sb_mcp_changed or soul_written:
+    if (
+        config_written
+        or env_changed
+        or sb_mcp_changed
+        or soul_written
+        or ddgs_script_written
+    ):
         # Give the pod a few seconds to settle so the restart isn't
         # racing the initial deploy.
         time.sleep(3)

@@ -182,6 +182,9 @@ spec:
       name: solilos-skills-pending
     - mountPath: /opt/data/notes
       name: syncthing-notes
+    - mountPath: /etc/cont-init.d/99-install-ddgs
+      name: hermes-data
+      subPath: 99-install-ddgs
 
   # Privileged config sidecar (Solilos). The public chat pod can't write
   # Hermes' own data dir (0700, owned by a foreign subuid), so an admin's
