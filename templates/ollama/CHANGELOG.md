@@ -1,3 +1,8 @@
+## v3
+
+- `OLLAMA_DEFAULT_MODEL` default bumped to `gemma4:12b` (newer 12B parameter natively multimodal model).
+- `OLLAMA_EXTRA_MODELS` default changed to empty string (`""`) so only one model is loaded by default.
+
 ## v2
 
 - New `OLLAMA_EXTRA_MODELS` variable (CSV) — additional models pre-pulled at install time on top of `OLLAMA_DEFAULT_MODEL`. Default ships a quantized 26B model that fits 100% on a 16 GB GPU, giving the operator a one-click "smarter but slower" choice in Hermes' Models tab without a fresh download (#1046). Note: the 26B-VRAM variant is text-only — multimodal stays on `gemma4:e4b`.
