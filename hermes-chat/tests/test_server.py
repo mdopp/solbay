@@ -1094,3 +1094,146 @@ async def test_mcp_endpoint_agent_unavailable(aiohttp_client, monkeypatch):
     )
     client = await aiohttp_client(app)
     assert (await client.get("/api/mcp")).status == 502
+
+
+# --- Interactive MCP tester (#191) ----------------------------------------
+
+
+async def test_test_mcp_admin_proxies_agent(aiohttp_client, monkeypatch):
+    from solilos_chat import server as server_mod
+
+    calls = []
+
+    async def fake_test(url, token, server, tool, arguments):
+        calls.append((url, token, server, tool, arguments))
+        return {"ok": True, "result": {"out": "ok"}}
+
+    monkeypatch.setattr(server_mod, "_agent_test_mcp", fake_test)
+    app = build_app(
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        config_agent_url="http://agent:8650",
+        agent_token="k",
+    )
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        "/api/mcp/servicebay-mcp/test",
+        json={"tool": "restart_service", "arguments": {"name": "hermes"}},
+        headers={"Remote-Groups": "admins"},
+    )
+    body = await resp.json()
+    assert resp.status == 200
+    assert body == {"ok": True, "result": {"out": "ok"}}
+    assert calls == [
+        (
+            "http://agent:8650",
+            "k",
+            "servicebay-mcp",
+            "restart_service",
+            {"name": "hermes"},
+        )
+    ]
+
+
+async def test_test_mcp_non_admin_forbidden_no_call(aiohttp_client, monkeypatch):
+    from solilos_chat import server as server_mod
+
+    called = []
+
+    async def fake_test(url, token, server, tool, arguments):
+        called.append(1)
+        return {"ok": True}
+
+    monkeypatch.setattr(server_mod, "_agent_test_mcp", fake_test)
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        "/api/mcp/servicebay-mcp/test",
+        json={"tool": "x"},
+        headers={"Remote-Groups": "family"},
+    )
+    assert resp.status == 403
+    assert called == []
+
+
+async def test_test_mcp_empty_tool_rejected(aiohttp_client):
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        "/api/mcp/servicebay-mcp/test",
+        json={"tool": "  "},
+        headers={"Remote-Groups": "admins"},
+    )
+    assert resp.status == 400
+
+
+async def test_test_mcp_agent_unavailable_502(aiohttp_client, monkeypatch):
+    from solilos_chat import server as server_mod
+
+    async def fake_test(url, token, server, tool, arguments):
+        return None
+
+    monkeypatch.setattr(server_mod, "_agent_test_mcp", fake_test)
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        "/api/mcp/servicebay-mcp/test",
+        json={"tool": "x"},
+        headers={"Remote-Groups": "admins"},
+    )
+    assert resp.status == 502
+
+
+# --- Stop / cancel generation (#192) --------------------------------------
+
+
+async def test_cancel_unknown_session_is_noop(aiohttp_client):
+    app = build_app(
+        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+    resp = await client.post("/api/chat/cancel", json={"session_id": "nope"})
+    body = await resp.json()
+    assert resp.status == 200
+    assert body == {"ok": True, "cancelled": False}
+
+
+async def test_cancel_interrupts_active_stream(aiohttp_client):
+    # A stream that yields forever until cancelled; the cancel endpoint must
+    # break the loop and emit a `cancelled` frame (#192).
+    import asyncio
+
+    class _SlowHermes(_FakeHermes):
+        async def chat_stream(self, session_id, text, images=None):
+            self.turns.append((session_id, text))
+            while True:
+                yield {"type": "assistant.delta", "data": {"delta": "x"}}
+                await asyncio.sleep(0.01)
+
+    app = build_app(
+        hermes=_SlowHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+    )
+    client = await aiohttp_client(app)
+
+    resp = await client.post("/api/chat/stream", json={"input": "hi"})
+    assert resp.status == 200
+
+    # Read a couple of frames so the stream is registered, then cancel it.
+    await resp.content.readuntil(b"event: session")
+    await resp.content.readuntil(b"event: delta")
+    cancel = await client.post("/api/chat/cancel", json={"session_id": "sess-1"})
+    cbody = await cancel.json()
+    assert cbody == {"ok": True, "cancelled": True}
+
+    body = await resp.text()
+    assert "event: cancelled" in body
+    assert body.rstrip().endswith("data: {}")  # final 'done' frame

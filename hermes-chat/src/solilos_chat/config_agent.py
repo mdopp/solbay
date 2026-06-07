@@ -147,9 +147,38 @@ def _parse_mcp_servers(text: str) -> list[dict[str, str]]:
     return servers
 
 
-async def _mcp_list_tools(url: str, token: str) -> tuple[bool, list[str]]:
-    """Probe an MCP server: returns (reachable, [tool names]). A streamable
-    HTTP MCP replies either as JSON or SSE-framed `data:` lines."""
+def _mcp_parse(txt: str) -> dict:
+    """Decode an MCP streamable-HTTP body (raw JSON or SSE `data:` frames)."""
+    if "\ndata:" in txt or txt.startswith("data:"):
+        txt = "\n".join(
+            ln[5:].strip() for ln in txt.splitlines() if ln.startswith("data:")
+        )
+    try:
+        return json.loads(txt)
+    except (ValueError, TypeError):
+        return {}
+
+
+def _diagnose_connect_error(exc: Exception) -> str:
+    """Classify a connection exception into an operator-readable reason (#191).
+
+    Maps the common aiohttp/OS failure shapes to a short category so the Tools
+    panel shows *why* a server is unreachable, not just that it is."""
+    if isinstance(exc, TimeoutError):
+        return "Timeout — the server did not respond in time"
+    if isinstance(exc, aiohttp.ClientConnectorError):
+        return f"Network/DNS — cannot connect to the host ({exc})"
+    if isinstance(exc, aiohttp.ClientError):
+        return f"Connection error — {exc}"
+    return f"Connection error — {exc}"
+
+
+async def _mcp_probe(url: str, token: str) -> dict:
+    """Probe an MCP server (#191): {reachable, tools, error}.
+
+    `error` is '' when reachable; otherwise a short operator-readable reason
+    (DNS/network, auth/login, invalid endpoint, timeout). A streamable HTTP
+    MCP replies either as JSON or SSE-framed `data:` lines."""
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
@@ -169,18 +198,86 @@ async def _mcp_list_tools(url: str, token: str) -> tuple[bool, list[str]]:
         async with session.post(url, json=body, headers=h) as r:
             return r.status, r.headers.get("mcp-session-id"), await r.text()
 
-    def parse(txt: str) -> dict:
-        if "\ndata:" in txt or txt.startswith("data:"):
-            txt = "\n".join(
-                ln[5:].strip() for ln in txt.splitlines() if ln.startswith("data:")
-            )
-        try:
-            return json.loads(txt)
-        except (ValueError, TypeError):
-            return {}
-
     try:
         timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            st, sid, txt = await rpc(
+                s,
+                None,
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "config-agent", "version": "1"},
+                },
+            )
+            if st in (401, 403):
+                return {
+                    "reachable": False,
+                    "tools": [],
+                    "error": f"Authentication failed — server returned {st}",
+                }
+            if st == 404:
+                return {
+                    "reachable": False,
+                    "tools": [],
+                    "error": "Invalid endpoint — server returned 404",
+                }
+            if st >= 400:
+                return {
+                    "reachable": False,
+                    "tools": [],
+                    "error": f"Server returned HTTP {st}",
+                }
+            await rpc(s, sid, "notifications/initialized", notif=True)
+            st, _, txt = await rpc(s, sid, "tools/list", {})
+            if st >= 400:
+                return {"reachable": True, "tools": [], "error": ""}
+            data = _mcp_parse(txt)
+            tools = (
+                data.get("result", {}).get("tools", [])
+                if isinstance(data, dict)
+                else []
+            )
+            names = [t.get("name") for t in tools if isinstance(t, dict)]
+            return {
+                "reachable": True,
+                "tools": sorted(n for n in names if isinstance(n, str) and n),
+                "error": "",
+            }
+    except (aiohttp.ClientError, TimeoutError, OSError) as e:
+        log.error("agent.mcp.probe_failed", url=url, error=str(e))
+        return {"reachable": False, "tools": [], "error": _diagnose_connect_error(e)}
+
+
+async def _mcp_call_tool(url: str, token: str, tool: str, arguments: dict) -> dict:
+    """Invoke a single MCP tool and return {ok, result|error} (#191).
+
+    Used by the interactive Tools-panel tester; runs the same initialize ->
+    notifications/initialized -> tools/call handshake the agent uses to
+    restart Hermes, but for an operator-chosen tool + arguments. `result` is
+    the raw JSON-RPC `result` payload (whatever the tool returned)."""
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "Authorization": f"Bearer {token}",
+        "Origin": url,
+    }
+
+    async def rpc(session, sid, method, params=None, notif=False):
+        body = {"jsonrpc": "2.0", "method": method}
+        if not notif:
+            body["id"] = 1
+        if params is not None:
+            body["params"] = params
+        h = dict(headers)
+        if sid:
+            h["mcp-session-id"] = sid
+        async with session.post(url, json=body, headers=h) as r:
+            return r.status, r.headers.get("mcp-session-id"), await r.text()
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
         async with aiohttp.ClientSession(timeout=timeout) as s:
             st, sid, _ = await rpc(
                 s,
@@ -193,22 +290,23 @@ async def _mcp_list_tools(url: str, token: str) -> tuple[bool, list[str]]:
                 },
             )
             if st >= 400:
-                return False, []
+                return {"ok": False, "error": f"initialize failed — HTTP {st}"}
             await rpc(s, sid, "notifications/initialized", notif=True)
-            st, _, txt = await rpc(s, sid, "tools/list", {})
-            if st >= 400:
-                return True, []
-            data = parse(txt)
-            tools = (
-                data.get("result", {}).get("tools", [])
-                if isinstance(data, dict)
-                else []
+            st, _, txt = await rpc(
+                s, sid, "tools/call", {"name": tool, "arguments": arguments}
             )
-            names = [t.get("name") for t in tools if isinstance(t, dict)]
-            return True, sorted(n for n in names if isinstance(n, str) and n)
+            data = _mcp_parse(txt)
+            if isinstance(data, dict) and isinstance(data.get("error"), dict):
+                return {
+                    "ok": False,
+                    "error": str(data["error"].get("message") or data["error"]),
+                }
+            if st >= 400:
+                return {"ok": False, "error": f"tools/call failed — HTTP {st}"}
+            result = data.get("result") if isinstance(data, dict) else None
+            return {"ok": True, "result": result if result is not None else {}}
     except (aiohttp.ClientError, TimeoutError, OSError) as e:
-        log.error("agent.mcp.probe_failed", url=url, error=str(e))
-        return False, []
+        return {"ok": False, "error": _diagnose_connect_error(e)}
 
 
 async def _ollama_tags(ollama_url: str) -> list[str]:
@@ -413,18 +511,65 @@ def build_app(
             text = ""
         out = []
         for s in _parse_mcp_servers(text):
-            reachable, tools = (
-                await _mcp_list_tools(s["url"], s["token"]) if s["url"] else (False, [])
+            probe = (
+                await _mcp_probe(s["url"], s["token"])
+                if s["url"]
+                else {"reachable": False, "tools": [], "error": "No URL configured"}
             )
             out.append(
                 {
                     "name": s["name"],
                     "url": s["url"],
-                    "reachable": reachable,
-                    "tools": tools,
+                    "reachable": probe["reachable"],
+                    "tools": probe["tools"],
+                    "error": probe["error"],
                 }
             )
         return web.json_response({"ok": True, "servers": out})
+
+    async def test_mcp(request: web.Request) -> web.Response:
+        # Invoke one MCP tool on behalf of the chat panel's interactive tester
+        # (#191). The server is resolved by name from config.yaml so the token
+        # never leaves the sidecar; the operator only chooses a tool + args.
+        if not authorized(request):
+            return web.json_response(
+                {"ok": False, "reason": "unauthorized"}, status=401
+            )
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — any malformed JSON
+            return web.json_response(
+                {"ok": False, "reason": "invalid_json"}, status=400
+            )
+        tool = body.get("tool")
+        arguments = body.get("arguments")
+        if not isinstance(tool, str) or not tool.strip():
+            return web.json_response({"ok": False, "reason": "empty_tool"}, status=400)
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return web.json_response(
+                {"ok": False, "reason": "invalid_arguments"}, status=400
+            )
+        try:
+            text = Path(config_path).read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        server_name = request.match_info["server"]
+        match = next(
+            (s for s in _parse_mcp_servers(text) if s["name"] == server_name), None
+        )
+        if match is None or not match["url"]:
+            return web.json_response(
+                {"ok": False, "reason": "unknown_server"}, status=404
+            )
+        result = await _mcp_call_tool(
+            match["url"], match["token"], tool.strip(), arguments
+        )
+        log.info(
+            "agent.mcp.test", server=server_name, tool=tool.strip(), ok=result["ok"]
+        )
+        return web.json_response(result)
 
     app = web.Application()
     app.router.add_get("/health", health)
@@ -433,6 +578,7 @@ def build_app(
     app.router.add_get("/model", get_model)
     app.router.add_put("/model", put_model)
     app.router.add_get("/mcp", get_mcp)
+    app.router.add_post("/mcp/{server}/test", test_mcp)
     return app
 
 

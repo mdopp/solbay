@@ -75,6 +75,20 @@ def test_push_and_mcp_hosts_overridable(monkeypatch):
     assert s.mcp_host == "0.0.0.0"
 
 
+def test_fast_hermes_model_empty_when_unset(monkeypatch):
+    monkeypatch.delenv("FAST_HERMES_MODEL", raising=False)
+    s = _fresh_settings(monkeypatch, {"HERMES_URL": "http://hermes:8000"})
+    assert s.fast_hermes_model == ""
+
+
+def test_fast_hermes_model_read_and_trimmed(monkeypatch):
+    s = _fresh_settings(
+        monkeypatch,
+        {"HERMES_URL": "http://hermes:8000", "FAST_HERMES_MODEL": "  gemma4:e2b  "},
+    )
+    assert s.fast_hermes_model == "gemma4:e2b"
+
+
 def test_hermes_url_is_required(monkeypatch):
     monkeypatch.delenv("HERMES_URL", raising=False)
     import gatekeeper.config as cfg_mod

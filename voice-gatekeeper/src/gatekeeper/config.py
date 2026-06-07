@@ -20,6 +20,7 @@ class Settings:
     openwakeword_uri: str
     hermes_url: str
     hermes_token: str
+    fast_hermes_model: str
     default_uid: str
     push_host: str
     push_port: int
@@ -57,6 +58,7 @@ class Settings:
             ),
             hermes_url=os.environ["HERMES_URL"],
             hermes_token=os.environ.get("HERMES_TOKEN", ""),
+            fast_hermes_model=os.environ.get("FAST_HERMES_MODEL", "").strip(),
             default_uid=os.environ.get("DEFAULT_UID", "michael"),
             # Loopback by default: the push + MCP listeners only ever serve
             # Hermes, which shares the host netns (hostNetwork) and reaches

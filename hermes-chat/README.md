@@ -79,6 +79,12 @@ another resident's session by guessing its id (returns 404).
   or `404` if it isn't the caller's session.
 - `POST /api/chat` — `{"input": …, "session_id": …?}` →
   `{"ok": true, "session_id": …, "reply": …}`.
+- `POST /api/chat/cancel` — `{"session_id": …}` → interrupts that session's
+  in-flight stream (the panel's Stop button); the stream closes its upstream
+  Hermes connection, ending the model run, and emits a `cancelled` frame.
+- `POST /api/mcp/{server}/test` — admin-only; `{"tool": …, "arguments": {…}}`
+  invokes one MCP tool via the sidecar (the Tools-panel tester) →
+  `{"ok": true, "result": …}` or `{"ok": false, "error": …}`.
 
 ## Run
 

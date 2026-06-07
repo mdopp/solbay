@@ -77,7 +77,11 @@ async def _serve_wyoming() -> None:
     log.info("gatekeeper.boot", uri=settings.gatekeeper_uri)
     # One shared Hermes client so its per-conversation session cache survives
     # across connections — each Wyoming turn is its own connection (#142).
-    hermes = HermesClient(settings.hermes_url, settings.hermes_token)
+    hermes = HermesClient(
+        settings.hermes_url,
+        settings.hermes_token,
+        fast_model=settings.fast_hermes_model,
+    )
     await server.run(lambda r, w: GatekeeperHandler(r, w, _info(), hermes))
 
 

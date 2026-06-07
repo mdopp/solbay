@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import os
 
+import aiohttp
+
 from solilos_chat import config_agent
 from solilos_chat.config_agent import (
+    _diagnose_connect_error,
     _find_model_value,
     _parse_mcp_servers,
     _servicebay_mcp_creds,
@@ -207,9 +210,9 @@ async def test_get_mcp_lists_servers_without_tokens(
     aiohttp_client, tmp_path, monkeypatch
 ):
     async def fake_probe(url, token):
-        return (True, ["tool_a", "tool_b"])
+        return {"reachable": True, "tools": ["tool_a", "tool_b"], "error": ""}
 
-    monkeypatch.setattr(config_agent, "_mcp_list_tools", fake_probe)
+    monkeypatch.setattr(config_agent, "_mcp_probe", fake_probe)
     app, _ = _model_app(tmp_path)  # SAMPLE_CONFIG has ha-mcp + servicebay-mcp
     client = await aiohttp_client(app)
 
@@ -220,6 +223,100 @@ async def test_get_mcp_lists_servers_without_tokens(
     assert names == {"ha-mcp", "servicebay-mcp"}
     for s in body["servers"]:
         assert s["reachable"] is True and s["tools"] == ["tool_a", "tool_b"]
+        assert s["error"] == ""
         assert "token" not in s  # tokens never leave the agent
 
     assert (await client.get("/mcp")).status == 401  # no auth
+
+
+# --- Connectivity diagnostics + interactive tester (#191) -----------------
+
+
+def test_diagnose_connect_error_categories():
+    assert "Timeout" in _diagnose_connect_error(TimeoutError())
+
+    class _FakeConnectorError(aiohttp.ClientConnectorError):
+        def __init__(self):
+            Exception.__init__(self, "no route")
+
+        def __str__(self):
+            return "no route"
+
+    assert "Network/DNS" in _diagnose_connect_error(_FakeConnectorError())
+    assert "Connection error" in _diagnose_connect_error(aiohttp.ClientError("boom"))
+
+
+async def test_get_mcp_surfaces_error_when_unreachable(
+    aiohttp_client, tmp_path, monkeypatch
+):
+    async def fake_probe(url, token):
+        return {
+            "reachable": False,
+            "tools": [],
+            "error": "Authentication failed — server returned 401",
+        }
+
+    monkeypatch.setattr(config_agent, "_mcp_probe", fake_probe)
+    app, _ = _model_app(tmp_path)
+    client = await aiohttp_client(app)
+    body = await (await client.get("/mcp", headers=AUTH)).json()
+    for s in body["servers"]:
+        assert s["reachable"] is False
+        assert "Authentication failed" in s["error"]
+
+
+async def test_test_mcp_invokes_named_server_tool(
+    aiohttp_client, tmp_path, monkeypatch
+):
+    calls = []
+
+    async def fake_call(url, token, tool, arguments):
+        calls.append((url, token, tool, arguments))
+        return {"ok": True, "result": {"echo": arguments}}
+
+    monkeypatch.setattr(config_agent, "_mcp_call_tool", fake_call)
+    app, _ = _model_app(tmp_path)
+    client = await aiohttp_client(app)
+
+    resp = await client.post(
+        "/mcp/servicebay-mcp/test",
+        json={"tool": "restart_service", "arguments": {"name": "hermes"}},
+        headers=AUTH,
+    )
+    body = await resp.json()
+    assert resp.status == 200
+    assert body == {"ok": True, "result": {"echo": {"name": "hermes"}}}
+    # The agent resolves the server's url+token from config — caller never sees it.
+    assert calls == [
+        (
+            "http://127.0.0.1:5888/mcp",
+            "sb_0a1b2c3d_ABCDEF234567",
+            "restart_service",
+            {"name": "hermes"},
+        )
+    ]
+
+
+async def test_test_mcp_unknown_server_404(aiohttp_client, tmp_path):
+    app, _ = _model_app(tmp_path)
+    client = await aiohttp_client(app)
+    resp = await client.post("/mcp/nope-mcp/test", json={"tool": "x"}, headers=AUTH)
+    assert resp.status == 404
+
+
+async def test_test_mcp_auth_and_validation(aiohttp_client, tmp_path):
+    app, _ = _model_app(tmp_path)
+    client = await aiohttp_client(app)
+    assert (
+        await client.post("/mcp/servicebay-mcp/test", json={"tool": "x"})
+    ).status == 401
+    assert (
+        await client.post("/mcp/servicebay-mcp/test", json={"tool": "  "}, headers=AUTH)
+    ).status == 400
+    assert (
+        await client.post(
+            "/mcp/servicebay-mcp/test",
+            json={"tool": "x", "arguments": "nope"},
+            headers=AUTH,
+        )
+    ).status == 400

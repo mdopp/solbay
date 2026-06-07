@@ -8,6 +8,7 @@ returns the id. All chat/session state lives in Hermes (`~/.hermes`).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,12 @@ def build_app(
     logout_url: str = "",
     context_window: int = 131072,
 ) -> web.Application:
+    # Active streaming turns, keyed by session id (#192). Each entry is an
+    # asyncio.Event the stream loop polls; POST /api/chat/cancel sets it, which
+    # breaks the loop and closes the upstream Hermes connection (closing that
+    # connection is what actually interrupts the model's generation).
+    cancels: dict[str, asyncio.Event] = {}
+
     async def index(_request: web.Request) -> web.Response:
         return web.FileResponse(STATIC_DIR / "index.html")
 
@@ -126,6 +133,68 @@ def build_app(
                 {"ok": False, "reason": "agent_unavailable"}, status=502
             )
         return web.json_response({"ok": True, "servers": servers})
+
+    async def test_mcp(request: web.Request) -> web.Response:
+        # Interactive Tools-panel tester (#191): run one MCP tool with operator
+        # args. Admin-gated — invoking a tool can mutate (e.g. restart_service),
+        # so it carries the same gate as the other write controls.
+        if not is_admin(request, remote_groups_header, admin_group):
+            return web.json_response({"ok": False, "reason": "forbidden"}, status=403)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — any malformed JSON
+            return web.json_response(
+                {"ok": False, "reason": "invalid_json"}, status=400
+            )
+        tool = body.get("tool")
+        if not isinstance(tool, str) or not tool.strip():
+            return web.json_response({"ok": False, "reason": "empty_tool"}, status=400)
+        arguments = body.get("arguments")
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return web.json_response(
+                {"ok": False, "reason": "invalid_arguments"}, status=400
+            )
+        result = await _agent_test_mcp(
+            config_agent_url,
+            agent_token,
+            request.match_info["server"],
+            tool.strip(),
+            arguments,
+        )
+        if result is None:
+            return web.json_response(
+                {"ok": False, "reason": "agent_unavailable"}, status=502
+            )
+        log.info(
+            "chat.mcp.test",
+            uid=resolve_uid(request, remote_user_header, default_uid),
+            server=request.match_info["server"],
+            tool=tool.strip(),
+            ok=bool(result.get("ok")),
+        )
+        return web.json_response(result)
+
+    async def cancel_chat(request: web.Request) -> web.Response:
+        # Interrupt an in-flight stream for a session (#192). Sets the cancel
+        # event the stream loop polls; the loop then stops reading from Hermes
+        # and closes that connection, releasing the model run.
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — any malformed JSON
+            body = {}
+        session_id = str((body or {}).get("session_id") or "")
+        event = cancels.get(session_id) if session_id else None
+        if event is None:
+            return web.json_response({"ok": True, "cancelled": False})
+        event.set()
+        log.info(
+            "chat.stream.cancelled",
+            uid=resolve_uid(request, remote_user_header, default_uid),
+            session_id=session_id,
+        )
+        return web.json_response({"ok": True, "cancelled": True})
 
     async def list_personalities(_request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "personalities": personalities.catalog()})
@@ -377,16 +446,27 @@ def build_app(
         )
         await resp.prepare(request)
 
+        cancel = asyncio.Event()
         try:
             if not session_id:
                 session_id = await hermes.create_session(uid, system_prompt)
                 log.info("chat.session.created", uid=uid, session_id=session_id)
                 await hermes.set_title(session_id, _title_from(text))
+            cancels[session_id] = cancel
             await _send_event(resp, "session", {"session_id": session_id})
-            async for event in hermes.chat_stream(session_id, text, images):
+            stream = hermes.chat_stream(session_id, text, images)
+            async for event in stream:
+                if cancel.is_set():
+                    # Closing the upstream generator aborts the Hermes/Ollama
+                    # run (#192) — stops generation, not just our forwarding.
+                    await stream.aclose()
+                    await _send_event(resp, "cancelled", {})
+                    break
                 await _send_event(resp, *_normalize(event))
         except HermesError:
             await _send_event(resp, "error", {"reason": "hermes_unavailable"})
+        finally:
+            cancels.pop(session_id, None)
         await _send_event(resp, "done", {})
         return resp
 
@@ -396,6 +476,7 @@ def build_app(
     app.router.add_get("/api/whoami", whoami)
     app.router.add_get("/api/toolsets", list_toolsets)
     app.router.add_get("/api/mcp", list_mcp)
+    app.router.add_post("/api/mcp/{server}/test", test_mcp)
     app.router.add_get("/api/personalities", list_personalities)
     app.router.add_get("/api/skills", list_skills)
     app.router.add_get("/api/skills/{skill_id}", get_skill)
@@ -410,6 +491,7 @@ def build_app(
     app.router.add_delete("/api/sessions/{session_id}", delete_session)
     app.router.add_post("/api/chat", chat)
     app.router.add_post("/api/chat/stream", chat_stream)
+    app.router.add_post("/api/chat/cancel", cancel_chat)
     app.router.add_static("/static/", STATIC_DIR)
     return app
 
@@ -506,6 +588,34 @@ async def _agent_get_mcp(agent_url: str, token: str) -> list[dict[str, Any]] | N
         return servers if isinstance(servers, list) else []
     except (aiohttp.ClientError, TimeoutError, OSError, ValueError) as e:
         log.error("chat.agent.unreachable", op="get_mcp", error=str(e))
+        return None
+
+
+async def _agent_test_mcp(
+    agent_url: str, token: str, server: str, tool: str, arguments: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Ask the sidecar to invoke `tool` on MCP `server` (#191). The agent's
+    JSON ({ok, result|error}) on 2xx, None when the sidecar is unreachable."""
+    url = f"{agent_url.rstrip('/')}/mcp/{server}/test"
+    try:
+        timeout = aiohttp.ClientTimeout(total=35)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            async with client.post(
+                url,
+                json={"tool": tool, "arguments": arguments},
+                headers=_agent_headers(token),
+            ) as r:
+                if r.status == 404:
+                    return {"ok": False, "error": "Unknown MCP server"}
+                if r.status >= 400:
+                    detail = (await r.text())[:300]
+                    log.error(
+                        "chat.agent.error", op="test_mcp", status=r.status, body=detail
+                    )
+                    return {"ok": False, "error": f"Agent returned HTTP {r.status}"}
+                return await r.json()
+    except (aiohttp.ClientError, TimeoutError, OSError, ValueError) as e:
+        log.error("chat.agent.unreachable", op="test_mcp", error=str(e))
         return None
 
 
