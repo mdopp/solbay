@@ -176,7 +176,7 @@ def render_custom_providers_block(provider_url: str, tags: list[str]) -> str:
             base_url: http://127.0.0.1:11434/v1
             api_key: none
             models:
-              gemma4:e4b: {}
+              gemma4:12b: {}
               VladimirGav/gemma4-26b-16GB-VRAM:latest: {}
 
     Empty per-model mappings leave context_length / api_mode for Hermes
@@ -201,7 +201,7 @@ def render_custom_providers_block(provider_url: str, tags: list[str]) -> str:
         # YAML keys containing `:` are unambiguous when they're the
         # entire key (no flow context, no anchors), but a literal `: `
         # mid-value would terminate the key. Ollama tags only use `:`
-        # as a name/tag separator (`gemma4:e4b`); no space follows. Safe
+        # as a name/tag separator (`gemma4:12b`); no space follows. Safe
         # to emit unquoted. Empty mapping `{}` means "no overrides".
         out.append(f"      {tag}: {{}}\n")
     return "".join(out)
@@ -981,7 +981,7 @@ def main() -> int:
     api_port = env("HERMES_API_PORT", "8642")
     api_key = env("HERMES_API_KEY")
     provider_url = env("HERMES_LLM_PROVIDER_URL", "http://127.0.0.1:11434/v1")
-    model = env("OLLAMA_DEFAULT_MODEL", "gemma4:e4b")
+    model = env("OLLAMA_DEFAULT_MODEL", "gemma4:12b")
     dashboard_port = env("HERMES_DASHBOARD_PORT")
     honcho_port = env("HONCHO_PORT")
     honcho_api_key = env("HONCHO_API_KEY")

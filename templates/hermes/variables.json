@@ -25,8 +25,8 @@
   },
   "OLLAMA_DEFAULT_MODEL": {
     "type": "text",
-    "description": "Model tag Hermes writes into `config.yaml`'s `model.model`. Shares its name with the `ollama` template's variable, so ServiceBay prompts for it once and the tag Hermes requests is exactly the one Ollama pre-pulls — the two can't drift apart. Default `gemma4:e4b` (multimodal, fits a 16 GB GPU). Only override if you point `HERMES_LLM_PROVIDER_URL` at a non-Ollama backend.",
-    "default": "gemma4:e4b"
+    "description": "Model tag Hermes writes into `config.yaml`'s `model.model`. Shares its name with the `ollama` template's variable, so ServiceBay prompts for it once and the tag Hermes requests is exactly the one Ollama pre-pulls — the two can't drift apart. Default `gemma4:12b` (multimodal, fits a 16 GB GPU). Only override if you point `HERMES_LLM_PROVIDER_URL` at a non-Ollama backend.",
+    "default": "gemma4:12b"
   },
   "HERMES_DASHBOARD_PORT": {
     "type": "text",

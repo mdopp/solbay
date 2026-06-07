@@ -490,7 +490,7 @@ def install_gpu_quadlet_fallback(port: str, data_dir: str) -> bool:
 
 def main() -> int:
     port = env("OLLAMA_PORT", "11434")
-    model = env("OLLAMA_DEFAULT_MODEL", "gemma4:e4b")
+    model = env("OLLAMA_DEFAULT_MODEL", "gemma4:12b")
     extra_models_raw = env("OLLAMA_EXTRA_MODELS", "")
     extra_models = [m.strip() for m in extra_models_raw.split(",") if m.strip()]
     vision_model = env("OLLAMA_VISION_MODEL", "")

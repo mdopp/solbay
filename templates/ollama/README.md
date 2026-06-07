@@ -12,31 +12,30 @@ networking.
 
 - `OLLAMA_PORT` — host port. Default `11434`. Bound to loopback.
 - `OLLAMA_DEFAULT_MODEL` — primary model. The tag Hermes' `model.model`
-  points at after install. Default `gemma4:e4b` — 8B params @ Q4_K_M,
-  ~10 GB on disk, fits 100% on a 16 GB GPU, AND ships native multimodal
-  (`ollama show gemma4:e4b` reports `completion, vision, audio, tools,
+  points at after install. Default `gemma4:12b` — 12B params,
+  fits on a 16 GB GPU, AND ships native multimodal
+  (`ollama show gemma4:12b` reports `completion, vision, audio, tools,
   thinking`). That single default backs Solilos's multimodal-ingestion
   path without a separate vision pull. Any Ollama library tag works,
   plus user-namespaced tags like `VladimirGav/gemma4-26b-16GB-VRAM:latest`.
 - `OLLAMA_EXTRA_MODELS` — comma-separated list of additional models
   pre-pulled at install time on top of the default. Gives the operator
   one-click switchable choices in Hermes' Models tab without a fresh
-  download. Default ships `VladimirGav/gemma4-26b-16GB-VRAM:latest` —
-  a quantized 26B that still fits 100% on a 16 GB GPU, complementing
-  the smaller default for harder text reasoning. **Caveat:** the 16
+  download. Default is empty (set to empty string to skip, which ensures
+  only one model is loaded by default). Set to `VladimirGav/gemma4-26b-16GB-VRAM:latest`
+  if you want a quantized 26B that still fits 100% on a 16 GB GPU, complementing
+  the default for harder text reasoning. **Caveat:** the 16
   GB quant strips vision and audio from its `Capabilities` block — it's
   text-only. Switching the active model to it drops multimodal; switch
-  back to `gemma4:e4b` (or pull plain `gemma4:26b` ~17 GB with partial
-  CPU offload) for OCR / voice-note flows. Each extra adds 10–20
-  minutes to the install on a typical home link. Set to empty string
-  to skip.
+  back to `gemma4:12b` (or pull plain `gemma4:26b` ~17 GB with partial
+  CPU offload) for OCR / voice-note flows.
 - `OLLAMA_VISION_MODEL` — historical, mostly unused now that the
-  default `gemma4:e4b` ships vision + audio natively. Set this only if
+  default `gemma4:12b` ships vision + audio natively. Set this only if
   you've changed `OLLAMA_DEFAULT_MODEL` to a text-only tag and still
   want a vision backend for Solilos's `media-ingestion-multimodal` skill.
   Suggested non-default tags: `qwen2.5vl:7b`, `llava:13b`, `bakllava:7b`.
 - `OLLAMA_CONTEXT_LENGTH` — Ollama's default load context window, in
-  tokens. Default `131072` (gemma4:e4b's full native context, ~6.5 GB
+  tokens. Default `131072` (gemma4:12b's full native context, ~6.5 GB
   VRAM, 100% GPU). Forces the size models load at so Hermes' 4157-token
   system prompt isn't truncated to a 1-token reply by Ollama's stock
   4096 default (#146 — the `/v1` endpoint ignores per-request
@@ -96,16 +95,16 @@ cached and skips the pulls.
 
 ## Multimodal (vision + audio) inference
 
-The default `OLLAMA_DEFAULT_MODEL=gemma4:e4b` is natively multimodal —
-`ollama show gemma4:e4b` reports `completion, vision, audio, tools,
+The default `OLLAMA_DEFAULT_MODEL=gemma4:12b` is natively multimodal —
+`ollama show gemma4:12b` reports `completion, vision, audio, tools,
 thinking`. Solilos's `media-ingestion-multimodal` skill calls into it
 without a separate vision pull.
 
-Where the tag matters: the `OLLAMA_EXTRA_MODELS` default ships
-`VladimirGav/gemma4-26b-16GB-VRAM:latest`, which **drops vision and
-audio** in its 16 GB quant. An operator who switches Hermes' active
+Where the tag matters: the `OLLAMA_EXTRA_MODELS` default is empty, but
+if you pre-pulled `VladimirGav/gemma4-26b-16GB-VRAM:latest`, that model
+**drops vision and audio** in its 16 GB quant. An operator who switches Hermes' active
 model to that tag for "smarter text reasoning" gives up multimodal
-until they switch back to `gemma4:e4b` (or pull plain `gemma4:26b`,
+until they switch back to `gemma4:12b` (or pull plain `gemma4:26b`,
 ~17 GB with partial CPU offload, which keeps vision).
 
 `OLLAMA_VISION_MODEL` is the explicit override for setups where the

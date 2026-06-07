@@ -47,8 +47,7 @@ same gateway pattern.
 
 ## Picking an LLM
 
-Hermes defaults to **`gemma3:4b`** on Ollama — small enough to run on
-a homelab CPU, smart enough to handle daily-driver conversations.
+Hermes defaults to **`gemma4:12b`** on Ollama — smart enough to handle daily-driver conversations.
 If you have a GPU and want more capable answers, pull a bigger model
 from the *Models* page on the Ollama portal card and switch Hermes
 to it in *Settings → LLM Provider*.

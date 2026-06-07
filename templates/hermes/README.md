@@ -24,7 +24,7 @@ ServiceBay pod that:
   Default `http://127.0.0.1:11434/v1` (the `ollama` template).
 - `OLLAMA_DEFAULT_MODEL` — model tag Hermes requests. Shared with
   the `ollama` template (one prompt, can't drift). Default
-  `gemma4:e4b`.
+  `gemma4:12b`.
 - `HERMES_DASHBOARD_PORT` — host loopback port for the web
   dashboard. Default `9119`.
 - `HERMES_SUBDOMAIN` — subdomain for the dashboard. Default
@@ -70,7 +70,7 @@ FTS5 index, SOUL.md skeleton) idempotently on each start.
 Hermes' generated `config.yaml` writes a single `model:` block, so
 every turn — text-only or image-bearing — goes through the same
 model tag (`OLLAMA_DEFAULT_MODEL`, shared with the `ollama`
-template). The default `gemma4:e4b` is natively multimodal, so
+template). The default `gemma4:12b` is natively multimodal, so
 Solilos's `media-ingestion-multimodal` skill (book covers, document
 photos) OCRs images out of the box.
 
