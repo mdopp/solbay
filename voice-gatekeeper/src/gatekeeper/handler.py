@@ -67,7 +67,9 @@ class GatekeeperHandler(AsyncEventHandler):
         self._audio_start: AudioStart | None = None
         self._audio_buffer: list[AudioChunk] = []
         self._hermes = hermes or HermesClient(
-            settings.hermes_url, settings.hermes_token
+            settings.hermes_url,
+            settings.hermes_token,
+            fast_model=settings.fast_hermes_model,
         )
         log.info(
             "gatekeeper.session.open",

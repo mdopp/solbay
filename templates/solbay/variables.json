@@ -4,6 +4,11 @@
     "description": "Hermes user-id the gatekeeper hands every voice turn off under, until Phase 2 speaker-ID lands. Typically the LLDAP `uid` of the household's admin.",
     "default": "michael"
   },
+  "FAST_HERMES_MODEL": {
+    "type": "text",
+    "description": "Optional Ollama model id (e.g. `gemma4:e2b`) for adaptive voice routing (#187). When set, each voice turn first hits a fast/small model in its own Hermes session and only escalates to the default model on a low-quality reply (empty, or too short without a confirmation). Leave blank to disable — the gatekeeper then uses a single session on Hermes' default model, unchanged.",
+    "default": ""
+  },
   "GATEKEEPER_IMAGE": {
     "type": "text",
     "description": "Image tag for Solilos's gatekeeper container. Leave default unless you're running a fork PoC.",

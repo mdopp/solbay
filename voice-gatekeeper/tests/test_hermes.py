@@ -12,7 +12,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from gatekeeper.hermes import HermesClient, _extract_reply
+from gatekeeper.hermes import HermesClient, _extract_reply, _is_low_quality_reply
 
 
 def _install_transport(monkeypatch, handler):
@@ -126,6 +126,125 @@ async def test_chat_error_returns_empty(monkeypatch):
     client = HermesClient("http://hermes:8642", "")
     reply = await client.converse(text="hi", uid="u", endpoint="e", trace_id="t")
     assert reply == ""
+
+
+@pytest.mark.parametrize(
+    "reply,low",
+    [
+        ("", True),
+        ("   ", True),
+        ("hm", True),  # short, not a confirmation -> miss
+        ("idk", True),
+        ("ok", False),  # short confirmation -> good
+        ("Alles klar.", False),
+        ("Done!", False),
+        ("The living room light is now on.", False),  # long -> good
+    ],
+)
+def test_is_low_quality_reply(reply, low):
+    assert _is_low_quality_reply(reply) is low
+
+
+def _routing_handler(record, *, fast_reply, slow_reply="from slow"):
+    """Mock transport: fast session id 'sess-fast', slow id 'sess-slow'.
+
+    The model field in the create body selects which id is returned, so the
+    test can assert which session each chat turn hit.
+    """
+    import json
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        record.append((request.url.path, body))
+        if request.url.path == "/api/sessions":
+            sid = "sess-fast" if body.get("model") else "sess-slow"
+            return httpx.Response(200, json={"id": sid})
+        if request.url.path == "/api/sessions/sess-fast/chat":
+            return httpx.Response(200, json={"message": {"content": fast_reply}})
+        if request.url.path == "/api/sessions/sess-slow/chat":
+            return httpx.Response(200, json={"message": {"content": slow_reply}})
+        return httpx.Response(404)
+
+    return handler
+
+
+async def test_fast_success_no_fallback(monkeypatch):
+    record: list[tuple[str, dict]] = []
+    _install_transport(
+        monkeypatch,
+        _routing_handler(record, fast_reply="The living room light is now on."),
+    )
+    client = HermesClient("http://hermes:8642", "", fast_model="gemma4:e2b")
+
+    reply = await client.converse(
+        text="lights on", uid="michael", endpoint="e", trace_id="t"
+    )
+
+    assert reply == "The living room light is now on."
+    paths = [p for p, _ in record]
+    # Only the fast session is created + used; the slow session never runs.
+    assert "/api/sessions/sess-slow/chat" not in paths
+    assert record[0][1] == {"user_id": "michael", "model": "gemma4:e2b"}
+
+
+async def test_fast_empty_falls_back_to_slow(monkeypatch):
+    record: list[tuple[str, dict]] = []
+    _install_transport(
+        monkeypatch,
+        _routing_handler(record, fast_reply="", slow_reply="recovered by slow"),
+    )
+    client = HermesClient("http://hermes:8642", "", fast_model="gemma4:e2b")
+
+    reply = await client.converse(
+        text="complex", uid="michael", endpoint="e", trace_id="t"
+    )
+
+    assert reply == "recovered by slow"
+    paths = [p for p, _ in record]
+    assert "/api/sessions/sess-fast/chat" in paths
+    assert "/api/sessions/sess-slow/chat" in paths
+    # The slow session is created without a model override (uses Hermes default).
+    slow_create = next(
+        b for p, b in record if p == "/api/sessions" and not b.get("model")
+    )
+    assert slow_create == {"user_id": "michael"}
+
+
+async def test_fast_too_short_falls_back_to_slow(monkeypatch):
+    record: list[tuple[str, dict]] = []
+    _install_transport(
+        monkeypatch,
+        _routing_handler(record, fast_reply="hm?", slow_reply="full slow answer"),
+    )
+    client = HermesClient("http://hermes:8642", "", fast_model="gemma4:e2b")
+
+    reply = await client.converse(text="q", uid="michael", endpoint="e", trace_id="t")
+
+    assert reply == "full slow answer"
+    assert "/api/sessions/sess-slow/chat" in [p for p, _ in record]
+
+
+async def test_no_fast_model_single_session_passthrough(monkeypatch):
+    record: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        body = json.loads(request.content) if request.content else {}
+        record.append((request.url.path, body))
+        if request.url.path == "/api/sessions":
+            return httpx.Response(200, json={"id": "only"})
+        return httpx.Response(200, json={"message": {"content": "x"}})
+
+    _install_transport(monkeypatch, handler)
+    client = HermesClient("http://hermes:8642", "")  # fast_model unset
+
+    await client.converse(text="hi", uid="michael", endpoint="e", trace_id="t")
+
+    # Exactly one session, no model override in the create body.
+    creates = [b for p, b in record if p == "/api/sessions"]
+    assert creates == [{"user_id": "michael"}]
+    assert client._sessions == {"michael": "only"}
 
 
 @pytest.mark.parametrize(
