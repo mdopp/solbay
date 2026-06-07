@@ -177,6 +177,7 @@ def render_custom_providers_block(provider_url: str, tags: list[str]) -> str:
             api_key: none
             models:
               gemma4:12b: {}
+              gemma4:e2b: {}
               VladimirGav/gemma4-26b-16GB-VRAM:latest: {}
 
     Empty per-model mappings leave context_length / api_mode for Hermes

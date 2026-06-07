@@ -17,17 +17,16 @@ networking.
   (`ollama show gemma4:12b` reports `completion, vision, audio, tools,
   thinking`). That single default backs Solilos's multimodal-ingestion
   path without a separate vision pull. Any Ollama library tag works,
-  plus user-namespaced tags like `VladimirGav/gemma4-26b-16GB-VRAM:latest`.
+  plus user-namespaced tags like `gemma4:12b`, `gemma4:e2b`, or `VladimirGav/gemma4-26b-16GB-VRAM:latest`.
 - `OLLAMA_EXTRA_MODELS` — comma-separated list of additional models
   pre-pulled at install time on top of the default. Gives the operator
   one-click switchable choices in Hermes' Models tab without a fresh
   download. Default is empty (set to empty string to skip, which ensures
-  only one model is loaded by default). Set to `VladimirGav/gemma4-26b-16GB-VRAM:latest`
-  if you want a quantized 26B that still fits 100% on a 16 GB GPU, complementing
-  the default for harder text reasoning. **Caveat:** the 16
-  GB quant strips vision and audio from its `Capabilities` block — it's
+  only one model is loaded by default). Set to `gemma4:e2b` or `VladimirGav/gemma4-26b-16GB-VRAM:latest`
+  if you want a second model. **Caveat:** the 16
+  GB quant of the 26B-VRAM variant strips vision and audio from its `Capabilities` block — it's
   text-only. Switching the active model to it drops multimodal; switch
-  back to `gemma4:12b` (or pull plain `gemma4:26b` ~17 GB with partial
+  back to `gemma4:12b` or `gemma4:e2b` (or pull plain `gemma4:26b` ~17 GB with partial
   CPU offload) for OCR / voice-note flows.
 - `OLLAMA_VISION_MODEL` — historical, mostly unused now that the
   default `gemma4:12b` ships vision + audio natively. Set this only if

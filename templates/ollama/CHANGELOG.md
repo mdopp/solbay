@@ -1,6 +1,6 @@
 ## v3
 
-- `OLLAMA_DEFAULT_MODEL` default bumped to `gemma4:12b` (newer 12B parameter natively multimodal model).
+- `OLLAMA_DEFAULT_MODEL` default bumped to `gemma4:12b` (newer 12B parameter natively multimodal model, with `gemma4:e2b` supported as a lighter alternative).
 - `OLLAMA_EXTRA_MODELS` default changed to empty string (`""`) so only one model is loaded by default.
 
 ## v2
