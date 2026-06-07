@@ -145,7 +145,6 @@ def test_household_collect_skips_when_mint_fails(household, monkeypatch):
     monkeypatch.setattr(household, "SERVICEBAY_MCP_URL", "http://127.0.0.1:5888/mcp")
     monkeypatch.setattr(household, "SERVICEBAY_MCP_TOKEN", JUNK)
     monkeypatch.setattr(household, "GATEKEEPER_MCP_URL", "")
-    monkeypatch.setattr(household, "ABS_API_KEY", "")
     monkeypatch.setattr(household, "existing_servicebay_mcp_token", lambda: None)
     monkeypatch.setattr(household, "mint_servicebay_mcp_token", lambda *a, **k: None)
 
@@ -158,7 +157,6 @@ def test_household_collect_skips_when_mint_fails(household, monkeypatch):
 def test_household_collect_keeps_valid_existing(household, monkeypatch):
     monkeypatch.setattr(household, "SERVICEBAY_MCP_URL", "http://127.0.0.1:5888/mcp")
     monkeypatch.setattr(household, "GATEKEEPER_MCP_URL", "")
-    monkeypatch.setattr(household, "ABS_API_KEY", "")
     monkeypatch.setattr(household, "existing_servicebay_mcp_token", lambda: GOOD)
     monkeypatch.setattr(household, "probe_servicebay_mcp_token", lambda t: True)
 
@@ -173,7 +171,6 @@ def test_household_collect_keeps_valid_existing(household, monkeypatch):
 def test_household_collect_mints_when_existing_invalid(household, monkeypatch):
     monkeypatch.setattr(household, "SERVICEBAY_MCP_URL", "http://127.0.0.1:5888/mcp")
     monkeypatch.setattr(household, "GATEKEEPER_MCP_URL", "")
-    monkeypatch.setattr(household, "ABS_API_KEY", "")
     monkeypatch.setattr(household, "existing_servicebay_mcp_token", lambda: None)
     monkeypatch.setattr(household, "mint_servicebay_mcp_token", lambda *a, **k: GOOD)
     servers = household.collect_mcp_servers()

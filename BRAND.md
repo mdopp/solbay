@@ -71,7 +71,7 @@ voice ("Hey Sol") or chat. It runs **on ServiceBay**, which is its harbor:
 **SolBay** is the home stack — the harbor where the soul rests (your chats,
 documents, knowledge) and the machinery that brings it alive runs. The `*Bay`
 sibling to ServiceBay. Components *inside* SolBay carry bare role names
-(`gatekeeper`, `schema-init`, `abs-mcp`) — the namespace already says whose they
+(`gatekeeper`, `schema-init`) — the namespace already says whose they
 are.
 
 ## Tone of voice
@@ -97,12 +97,12 @@ plain-spoken in the promise. Never self-help-cheesy, never cold-tech. It speaks
 | Home stack + pod | `oscar-household`, `stacks/oscar` | **SolBay**, `stacks/solbay` |
 | Home template dir | `templates/oscar-household` | `templates/solbay` |
 | Hermes plugin + stack name | `name: oscar`, `~/.hermes/plugins/oscar/` | `name: solbay`, `~/.hermes/plugins/solbay/` |
-| Components (in-stack, bare roles) | `oscar-gatekeeper`, `oscar-household-init`, `oscar-abs-mcp`, `oscar-data` | `gatekeeper`, `schema-init`, `abs-mcp`, `solilos-data` |
+| Components (in-stack, bare roles) | `oscar-gatekeeper`, `oscar-household-init`, `oscar-data` | `gatekeeper`, `schema-init`, `solilos-data` |
 | Chat pod | `oscar-chat` image, `templates/hermes-chat`, pkg `oscar_chat` | `solilos-chat` image + `templates/solilos-chat` template + pod, pkg `solilos_chat`; image **source** dir stays `hermes-chat/` |
-| Published images (GHCR, brand-prefixed) | `oscar-gatekeeper`, `oscar-household-init`, `oscar-abs-mcp`, `oscar-chat`, `oscar-gatekeeper-ml` | `solilos-gatekeeper`, `solilos-schema-init`, `solilos-abs-mcp`, `solilos-chat`, `solilos-gatekeeper-ml` |
+| Published images (GHCR, brand-prefixed) | `oscar-gatekeeper`, `oscar-household-init`, `oscar-chat`, `oscar-gatekeeper-ml` | `solilos-gatekeeper`, `solilos-schema-init`, `solilos-chat`, `solilos-gatekeeper-ml` |
 | Python projects | `oscar-gatekeeper`, `oscar-schema`, `oscar-chat` | `solilos-gatekeeper`, `solilos-schema`, `solilos-chat` |
 | Hermes skill names | `oscar-status`, `oscar-audit-query`, `oscar-debug-set`, `oscar-daily-chronicle`, `oscar-dynamic-skills`, `oscar-notes-search`, `oscar-room-enrollment`, `oscar-custom-*` | `sol-status`, `sol-audit-query`, `sol-debug-set`, `sol-daily-chronicle`, `sol-dynamic-skills`, `sol-notes-search`, `sol-room-enrollment`, `sol-custom-*` |
-| Wyoming program / MCP server names | `oscar-gatekeeper-asr/-tts`, `oscar-gatekeeper-rooms`, `oscar-abs` | `solilos-gatekeeper-asr/-tts`, `solilos-gatekeeper-rooms`, `solilos-abs` |
+| Wyoming program / MCP server names | `oscar-gatekeeper-asr/-tts`, `oscar-gatekeeper-rooms` | `solilos-gatekeeper-asr/-tts`, `solilos-gatekeeper-rooms` |
 | Notes namespace (tags + folders) | `#oscar/…`, `oscar/journal`, `oscar/ingested`, `oscar/stub` | `#solilos/…`, `solilos/journal`, `solilos/ingested`, `solilos/stub` |
 | HA onboarding account + token file | `oscar` user, `.oscar-long-lived-token` | `solilos` user, `.solilos-long-lived-token` |
 | Env vars | `OSCAR_*` | `SOLILOS_*` |
@@ -116,10 +116,10 @@ artifacts on `solilos` (images, Python projects, env vars `SOLILOS_*`, data
 paths, notes namespace, Wyoming/MCP program names). The chat pod is the one
 brand-prefixed *template* (`solilos-chat`) so it lines up with its
 `solilos-chat` image; only its image-source dir stays role-named `hermes-chat/`
-alongside the other role-named source dirs (`voice-gatekeeper/`, `database/`,
-`abs-mcp/`). Unchanged: `hermes`, `hermes-webui` (retired), `ollama`; generic
-packages `gatekeeper` / `abs_mcp`; `HERMES_*` / `ABS_*` / `GATEKEEPER_*` /
-`DEFAULT_UID`. The rename is a coordinated migration — see #138.
+alongside the other role-named source dirs (`voice-gatekeeper/`, `database/`).
+Unchanged: `hermes`, `hermes-webui` (retired), `ollama`; generic package
+`gatekeeper`; `HERMES_*` / `GATEKEEPER_*` / `DEFAULT_UID`. The rename is a
+coordinated migration — see #138.
 
 ---
 
