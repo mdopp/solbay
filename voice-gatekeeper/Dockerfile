@@ -10,7 +10,13 @@ RUN apt-get update \
 COPY pyproject.toml README.md /app/
 COPY src /app/src
 
-RUN pip install --no-cache-dir /app
+# EXTRAS selects optional dependency groups from pyproject. The default
+# image installs the base bridge only; the `solilos-gatekeeper-ml` image is
+# built with EXTRAS="[speaker-id]" (SpeechBrain + torch) so Phase-2
+# speaker-ID can load the ECAPA model. Kept one Dockerfile so the two
+# images never drift.
+ARG EXTRAS=""
+RUN pip install --no-cache-dir "/app${EXTRAS}"
 
 ENV PYTHONUNBUFFERED=1 \
     SOLILOS_COMPONENT=gatekeeper

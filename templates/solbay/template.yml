@@ -122,6 +122,17 @@ spec:
     # Path to solilos.db so Phase 2 speaker-ID can read voice_embeddings.
     - name: SOLILOS_DB_PATH
       value: "/var/lib/solilos/solilos.db"
+    # Phase-2 speaker-ID (#84). Off by default. Turning it on requires the
+    # ML image (set GATEKEEPER_IMAGE to ghcr.io/mdopp/solilos-gatekeeper-ml,
+    # which bakes in SpeechBrain/torch) — with the default image the
+    # extractor isn't importable and the gatekeeper safely falls back to
+    # DEFAULT_UID. The ECAPA model is cached under /var/lib/solilos (the
+    # solilos-data volume), so it downloads once. Biometric: stores per-
+    # resident voice embeddings in solilos.db.voice_embeddings.
+    - name: SOLILOS_SPEAKER_ID_ENABLED
+      value: "{{SOLILOS_SPEAKER_ID_ENABLED}}"
+    - name: SOLILOS_SPEAKER_ID_THRESHOLD
+      value: "{{SOLILOS_SPEAKER_ID_THRESHOLD}}"
     - name: SOLILOS_DEBUG_MODE
       value: "{{SOLILOS_DEBUG_MODE}}"
     - name: TZ
