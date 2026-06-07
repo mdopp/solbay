@@ -17,6 +17,7 @@ import aiohttp
 from aiohttp import web
 
 from solilos_chat import personalities, skills
+from solilos_chat.attachments import AttachmentStore, attach_to_messages
 from solilos_chat.hermes import HermesClient, HermesError
 from solilos_chat.logging import log
 
@@ -90,7 +91,13 @@ def build_app(
     agent_token: str = "",
     logout_url: str = "",
     context_window: int = 131072,
+    attachments_dir: str = "/data/attachments",
 ) -> web.Application:
+    # Hermes drops inbound images (persists a `[screenshot]` placeholder, no
+    # attachment API), so the proxy persists the sent data URLs itself and
+    # re-attaches them on history load (#202) — the one stateful exception.
+    attachments = AttachmentStore(attachments_dir)
+
     # Active streaming turns, keyed by session id (#192). Each entry is an
     # asyncio.Event the stream loop polls; POST /api/chat/cancel sets it, which
     # breaks the loop and closes the upstream Hermes connection (closing that
@@ -364,6 +371,9 @@ def build_app(
             )
         if session is None:
             return web.json_response({"ok": False, "reason": "not_found"}, status=404)
+        attach_to_messages(
+            session.get("messages") or [], attachments.batches(session_id)
+        )
         return web.json_response({"ok": True, "session": session})
 
     async def delete_session(request: web.Request) -> web.Response:
@@ -381,6 +391,7 @@ def build_app(
             return web.json_response(
                 {"ok": False, "reason": "delete_failed"}, status=502
             )
+        attachments.delete(session_id)
         log.info(
             "chat.session.deleted",
             uid=resolve_uid(request, remote_user_header, default_uid),
@@ -416,6 +427,7 @@ def build_app(
             return web.json_response(
                 {"ok": False, "reason": "hermes_unavailable"}, status=502
             )
+        attachments.add(session_id, images)
 
         return web.json_response({"ok": True, "session_id": session_id, "reply": reply})
 
@@ -454,6 +466,10 @@ def build_app(
                 await hermes.set_title(session_id, uid, _title_from(text))
             cancels[session_id] = cancel
             await _send_event(resp, "session", {"session_id": session_id})
+            # Persist the attachment once the turn is under way (Hermes has the
+            # user message; we hold the pixels it drops) so history re-renders
+            # the thumbnail after a refresh (#202).
+            attachments.add(session_id, images)
             stream = hermes.chat_stream(session_id, text, images)
             async for event in stream:
                 if cancel.is_set():
@@ -497,11 +513,13 @@ def build_app(
 
 
 def _images_from(body: Any) -> list[str]:
-    """Pull base64 image attachments from a chat body (#183).
+    """Pull image-attachment data URLs from a chat body (#183).
 
-    The browser sends `data:image/...;base64,<b64>` URLs; we strip the prefix
-    so Hermes receives bare base64 (the multimodal convention). Non-strings,
-    empties, and anything past `_MAX_IMAGES` are dropped.
+    The browser sends `data:image/...;base64,<b64>` URLs. Hermes' session-chat
+    consumes images as OpenAI `image_url` parts and requires the *full* data URL
+    (the `data:` prefix must stay — stripping it makes Hermes reject the part as
+    a non-image payload, #202), so we keep each URL as-is. Non-strings, empties,
+    and anything past `_MAX_IMAGES` are dropped.
     """
     raw = body.get("images") if isinstance(body, dict) else None
     if not isinstance(raw, list):
@@ -510,7 +528,7 @@ def _images_from(body: Any) -> list[str]:
     for item in raw:
         if not isinstance(item, str) or not item.strip():
             continue
-        out.append(item.split(",", 1)[1] if item.startswith("data:") else item)
+        out.append(item)
         if len(out) >= _MAX_IMAGES:
             break
     return out
@@ -703,6 +721,7 @@ async def serve(
     agent_token: str = "",
     logout_url: str = "",
     context_window: int = 131072,
+    attachments_dir: str = "/data/attachments",
 ) -> None:
     app = build_app(
         hermes=hermes,
@@ -716,6 +735,7 @@ async def serve(
         agent_token=agent_token,
         logout_url=logout_url,
         context_window=context_window,
+        attachments_dir=attachments_dir,
     )
     runner = web.AppRunner(app)
     await runner.setup()

@@ -83,6 +83,12 @@ spec:
     # link (no dead link when unset).
     - name: LOGOUT_URL
       value: "{{LOGOUT_URL}}"
+    # Where the proxy persists image attachments Hermes drops (#202): Hermes
+    # stores an inbound image as a `[screenshot]` placeholder with no way to
+    # read the pixels back, so the proxy holds them here and re-attaches them
+    # on history load. The one stateful store in an otherwise stateless pod.
+    - name: ATTACHMENTS_DIR
+      value: "/data/attachments"
     - name: TZ
       value: "{{TZ}}"
     # No `ports:` block — hostNetwork pod, the listener binds the host
@@ -97,8 +103,15 @@ spec:
     volumeMounts:
     - mountPath: /data/skills
       name: solilos-skills
+    - mountPath: /data/attachments
+      name: solilos-chat-attachments
   volumes:
   - name: solilos-skills
     hostPath:
       path: {{DATA_DIR}}/solbay/skills
+      type: DirectoryOrCreate
+  # Image-attachment store (#202): re-rendered in chat history after refresh.
+  - name: solilos-chat-attachments
+    hostPath:
+      path: {{DATA_DIR}}/solbay/chat-attachments
       type: DirectoryOrCreate

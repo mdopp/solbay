@@ -453,6 +453,31 @@ def strip_mcp_servers_block(content: str) -> str:
     return "".join(out)
 
 
+def ensure_supports_vision(content: str) -> str:
+    """Inject `supports_vision: true` under the top-level `model:` mapping.
+
+    The default chat model (gemma4) is vision-capable in Ollama, but Hermes'
+    `image_input_mode: auto` only attaches an inbound image natively when the
+    active model reports `supports_vision=True`. For a local Ollama model that
+    metadata is absent, so Hermes falls back to its `vision_analyze` tool —
+    which needs a separately-configured vision provider and otherwise errors,
+    leaving the model blind to the attachment (#202). The `model.supports_vision`
+    override (consulted before models.dev metadata) flips `auto` to native
+    attach. Idempotent: a no-op when the key is already present anywhere.
+    """
+    if "supports_vision" in content:
+        return content
+    lines = content.splitlines(keepends=True)
+    out: list[str] = []
+    injected = False
+    for line in lines:
+        out.append(line)
+        if not injected and line.rstrip("\n").rstrip() == "model:":
+            out.append("  supports_vision: true\n")
+            injected = True
+    return "".join(out) if injected else content
+
+
 def existing_servicebay_mcp_token() -> str | None:
     """Pull the current `servicebay-mcp` bearer out of the live config.yaml
     (read through the hermes container). Returns the token only when it's
@@ -513,7 +538,7 @@ def merge_config_yaml(servers: list[tuple[str, str, str]]) -> bool:
     existing = read_config_via_container()
     if existing is None:
         return False
-    stripped = strip_mcp_servers_block(existing)
+    stripped = ensure_supports_vision(strip_mcp_servers_block(existing))
     block = render_mcp_block(servers)
     # Append separator if there's preceding content
     if stripped and not stripped.endswith("\n"):
@@ -722,8 +747,10 @@ def main() -> int:
     servers = collect_mcp_servers()
     if not merge_config_yaml(servers):
         return 0  # config.yaml doesn't exist; nothing to do, not fatal
-    if servers:
-        restart_hermes_via_sb_api()
+    # The merge always rewrites config.yaml (mcp_servers block + the
+    # supports_vision override); restart so Hermes — which reads config.yaml
+    # only at boot — picks up both.
+    restart_hermes_via_sb_api()
     jlog("info", "solbay:post-deploy", "done", mcp_count=len(servers))
     return 0
 
