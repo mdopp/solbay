@@ -266,20 +266,32 @@ def test_maybe_json():
 # --- Image attachments (#183) ---------------------------------------------
 
 
-def test_chat_body_text_only_omits_images():
+def test_chat_body_text_only_is_plain_string():
     assert _chat_body("hi", None) == {"input": "hi"}
     assert _chat_body("hi", []) == {"input": "hi"}
 
 
-def test_chat_body_includes_images():
-    assert _chat_body("look", ["AAAA"]) == {"input": "look", "images": ["AAAA"]}
+def test_chat_body_images_become_content_parts():
+    # Hermes session-chat reads images ONLY as OpenAI content-parts inside
+    # `input`, with the full data: URL kept (#202). No top-level images key.
+    body = _chat_body("look", ["data:image/png;base64,AAAA"])
+    assert body == {
+        "input": [
+            {"type": "text", "text": "look"},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,AAAA"},
+            },
+        ]
+    }
+    assert "images" not in body
 
 
-def test_images_from_strips_data_url_prefix_and_caps():
+def test_images_from_keeps_data_url_prefix_and_caps():
     body = {
         "images": [
-            "data:image/png;base64,AAAA",  # prefix stripped
-            "BBBB",  # bare base64 kept as-is
+            "data:image/png;base64,AAAA",  # full data URL kept (#202)
+            "BBBB",
             "",  # dropped (empty)
             123,  # dropped (not a string)
             "C1",
@@ -287,7 +299,7 @@ def test_images_from_strips_data_url_prefix_and_caps():
             "C3",  # 6th valid -> dropped by the cap of 4
         ]
     }
-    assert _images_from(body) == ["AAAA", "BBBB", "C1", "C2"]
+    assert _images_from(body) == ["data:image/png;base64,AAAA", "BBBB", "C1", "C2"]
 
 
 def test_images_from_non_list():
@@ -295,10 +307,13 @@ def test_images_from_non_list():
     assert _images_from({"images": "nope"}) == []
 
 
-async def test_chat_forwards_images(aiohttp_client):
+async def test_chat_forwards_images(aiohttp_client, tmp_path):
     fake = _FakeHermes()
     app = build_app(
-        hermes=fake, remote_user_header="Remote-User", default_uid="household"
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
     )
     client = await aiohttp_client(app)
 
@@ -308,13 +323,17 @@ async def test_chat_forwards_images(aiohttp_client):
     )
     assert resp.status == 200
     assert fake.turns == [("sess-1", "scan this")]
-    assert fake.images == [["ZZ"]]  # prefix stripped before reaching Hermes
+    # Full data URL reaches Hermes (prefix kept, #202).
+    assert fake.images == [["data:image/jpeg;base64,ZZ"]]
 
 
-async def test_chat_image_only_uses_default_prompt(aiohttp_client):
+async def test_chat_image_only_uses_default_prompt(aiohttp_client, tmp_path):
     fake = _FakeHermes()
     app = build_app(
-        hermes=fake, remote_user_header="Remote-User", default_uid="household"
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
     )
     client = await aiohttp_client(app)
 
@@ -336,10 +355,13 @@ async def test_chat_no_text_no_images_rejected(aiohttp_client):
     assert fake.turns == []
 
 
-async def test_stream_forwards_images(aiohttp_client):
+async def test_stream_forwards_images(aiohttp_client, tmp_path):
     fake = _FakeHermes(events=[{"type": "assistant.delta", "data": {"delta": "ok"}}])
     app = build_app(
-        hermes=fake, remote_user_header="Remote-User", default_uid="household"
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
     )
     client = await aiohttp_client(app)
 
@@ -350,7 +372,7 @@ async def test_stream_forwards_images(aiohttp_client):
     assert resp.status == 200
     await resp.text()
     assert fake.turns == [("sess-1", "look")]
-    assert fake.images == [["PP"]]
+    assert fake.images == [["data:image/png;base64,PP"]]
 
 
 async def test_first_turn_creates_session(aiohttp_client):
@@ -447,6 +469,88 @@ async def test_stream_empty_input_rejected(aiohttp_client):
     resp = await client.post("/api/chat/stream", json={"input": "  "})
     assert resp.status == 400
     assert fake.created == []
+
+
+# --- Attachment persistence (#202) ----------------------------------------
+
+
+async def test_chat_persists_attachment_and_history_reattaches(
+    aiohttp_client, tmp_path
+):
+    # A turn with an image persists it proxy-side; opening the session later
+    # re-attaches the stored data URL to the user message (#202). The image is
+    # stored under the session id the turn ran against.
+    store = [
+        {
+            "id": "sess-1",
+            "user_id": "mdopp",
+            "title": marker.embed("mdopp", "Photo chat"),
+            "last_activity": "2026-06-07T10:00:00Z",
+            "messages": [
+                {"role": "user", "content": "what is this?\n[screenshot]"},
+                {"role": "assistant", "content": "a cat"},
+            ],
+        }
+    ]
+    fake = _FakeHermes(store=store)
+    app = build_app(
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
+    )
+    client = await aiohttp_client(app)
+
+    url = "data:image/png;base64,IMG1"
+    resp = await client.post(
+        "/api/chat",
+        json={"input": "what is this?", "session_id": "sess-1", "images": [url]},
+        headers={"Remote-User": "mdopp"},
+    )
+    assert resp.status == 200
+
+    resp = await client.get("/api/sessions/sess-1", headers={"Remote-User": "mdopp"})
+    body = await resp.json()
+    assert resp.status == 200
+    msgs = body["session"]["messages"]
+    # The placeholder-bearing user message regained its image; assistant didn't.
+    assert msgs[0]["images"] == [url]
+    assert "images" not in msgs[1]
+
+
+async def test_get_session_without_stored_attachment_unchanged(
+    aiohttp_client, tmp_path
+):
+    fake = _FakeHermes(store=_two_user_store())
+    app = build_app(
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
+    )
+    client = await aiohttp_client(app)
+    resp = await client.get("/api/sessions/s-mdopp", headers={"Remote-User": "mdopp"})
+    body = await resp.json()
+    assert resp.status == 200
+    assert all("images" not in m for m in body["session"]["messages"])
+
+
+async def test_delete_session_removes_attachments(aiohttp_client, tmp_path):
+    fake = _FakeHermes(store=_two_user_store())
+    app = build_app(
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
+    )
+    client = await aiohttp_client(app)
+    # Seed an attachment for the session, then delete it.
+    (tmp_path / "s-mdopp.json").write_text('{"batches": [["X"]]}', encoding="utf-8")
+    resp = await client.delete(
+        "/api/sessions/s-mdopp", headers={"Remote-User": "mdopp"}
+    )
+    assert resp.status == 200
+    assert not (tmp_path / "s-mdopp.json").exists()
 
 
 def _two_user_store():

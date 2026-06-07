@@ -31,8 +31,10 @@ to `DEFAULT_UID`.
 - `GET /api/sessions?user_id={uid}` — list the uid's sessions.
 - `POST /api/sessions` — create a session bound to the uid.
 - `GET /api/sessions/{id}` — get a session + its message history.
-- `POST /api/sessions/{id}/chat` — body `{"input": …}` (plus an optional
-  `images: [<base64>]` for camera/upload attachments), returns the reply.
+- `POST /api/sessions/{id}/chat` — body `{"input": …}`. For an image turn,
+  `input` is an OpenAI content-parts array (a `text` part + one `image_url`
+  part per `data:image/…;base64,…` URL) — the only shape Hermes session-chat
+  consumes. Returns the reply.
 
 (Not the gatekeeper's placeholder `/converse`, which does not exist in the
 real Hermes API.)
@@ -42,12 +44,21 @@ real Hermes API.)
 The composer has a microphone button (browser-local speech-to-text via the
 Web Speech API — the transcript pre-populates the message box) and an
 attachment button (upload or in-browser camera capture via
-`getUserMedia`, with a client-side crop). Attached images are sent as
-base64 under the chat body's `images` key so the `media-ingestion-multimodal`
-skill and a vision model can act on them; an image with no typed text gets a
-default prompt so the turn still triggers the skill. Mic/camera need a
-secure context (HTTPS or localhost) and degrade gracefully when the browser
-lacks support.
+`getUserMedia`, with a client-side crop). Attached images are sent to the
+proxy as `data:image/…;base64,…` URLs under the chat body's `images` key; the
+proxy folds them into Hermes' `input` as OpenAI `image_url` content parts so a
+vision model can act on them (an image with no typed text gets a default
+prompt so the turn still goes through). For the local Ollama model to receive
+the pixels natively, solbay's post-deploy sets `model.supports_vision: true`
+in Hermes' `config.yaml` — otherwise Hermes' `image_input_mode: auto` falls
+back to a vision tool that needs a separate provider and the model stays
+blind to the attachment. Mic/camera need a secure context (HTTPS or
+localhost) and degrade gracefully when the browser lacks support.
+
+Hermes does not retain inbound images (it persists a `[screenshot]`
+placeholder and exposes no attachment API), so the proxy keeps the sent data
+URLs in a small per-session store under `ATTACHMENTS_DIR` and re-attaches them
+on history load — the one stateful exception, so thumbnails survive a refresh.
 
 ## Per-user privacy
 

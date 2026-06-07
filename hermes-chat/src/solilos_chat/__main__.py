@@ -30,6 +30,7 @@ def main() -> None:
             agent_token=settings.hermes_token,
             logout_url=settings.logout_url,
             context_window=settings.context_window,
+            attachments_dir=settings.attachments_dir,
         )
     )
 

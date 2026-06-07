@@ -184,9 +184,10 @@ class HermesClient:
     ) -> str:
         """Send one turn to an existing session; return the reply text.
 
-        `images` are base64-encoded image payloads (camera/upload from the
-        chat panel, #183); forwarded under the multimodal `images` key so the
-        media-ingestion skill and a vision model can act on the attachment.
+        `images` are `data:image/...;base64,...` URLs (camera/upload from the
+        chat panel, #183); folded into `input` as OpenAI content parts — the
+        shape Hermes session-chat actually consumes (#202) — so a vision model
+        can act on the attachment.
         """
         url = f"{self._base_url}/api/sessions/{session_id}/chat"
         async with aiohttp.ClientSession(timeout=self._timeout) as client:
@@ -204,7 +205,7 @@ class HermesClient:
         Each yielded event is `{"type": <event>, "data": <decoded payload>}`.
         The `assistant.delta` event carries token deltas; `tool.started`/
         `tool.completed` carry tool names; `run.completed` ends the turn.
-        `images` (base64, #183) ride the same multimodal `images` key.
+        `images` (data URLs, #183) ride `input` as OpenAI content parts (#202).
         """
         url = f"{self._base_url}/api/sessions/{session_id}/chat/stream"
         async with aiohttp.ClientSession(timeout=self._timeout) as client:
@@ -263,16 +264,23 @@ async def _iter_sse(stream: aiohttp.StreamReader) -> AsyncIterator[dict[str, Any
 
 
 def _chat_body(text: str, images: list[str] | None) -> dict[str, Any]:
-    """Build the Hermes chat body, adding `images` only when present.
+    """Build the Hermes chat body.
 
-    `images` are bare base64 strings (no `data:` prefix), the multimodal
-    convention Hermes/Ollama vision models read. Omitting the key entirely on
-    a text-only turn keeps the request shape identical to before.
+    Text-only turns send `input` as a plain string (request shape identical to
+    before). When images are present, `input` becomes an OpenAI-style
+    content-parts array — a `{"type": "text"}` part followed by one
+    `{"type": "image_url", "image_url": {"url": <data:image/...;base64,...>}}`
+    part per image. This is the *only* shape Hermes' session-chat consumes:
+    `_session_chat_user_message` reads `message`/`input` and runs it through
+    `_normalize_multimodal_content`, which requires full `data:image/...` URLs
+    (the `data:` prefix must stay) and ignores any top-level `images` key (#202).
     """
-    body: dict[str, Any] = {"input": text}
-    if images:
-        body["images"] = images
-    return body
+    if not images:
+        return {"input": text}
+    parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    for img in images:
+        parts.append({"type": "image_url", "image_url": {"url": img}})
+    return {"input": parts}
 
 
 def _maybe_json(payload: str) -> Any:

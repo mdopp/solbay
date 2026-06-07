@@ -1431,16 +1431,15 @@
         var turn = { controller: controller, msg: msg, stopped: false };
         activeTurn = turn;
         setStreaming(true);
-        streamChat(text, msg, images.map(stripDataUrl), controller.signal)
+        streamChat(text, msg, images, controller.signal)
           .then(function () { if (!turn.stopped) msg.finish(); if (firstTurn) loadSessions(); })
           .catch(function () { if (!turn.stopped) msg.fail("Network error. Please try again."); })
           .finally(function () { if (activeTurn === turn) setStreaming(false); });
       });
 
-      function stripDataUrl(u) { return u.indexOf(",") >= 0 ? u.slice(u.indexOf(",") + 1) : u; }
-
       // A user turn that may carry image thumbnails above the (optional) text.
-      function addUserTurn(text, images) {
+      // `when` defaults to now (live turn); history passes the message ts.
+      function addUserTurn(text, images, when) {
         var el = document.createElement("div");
         el.className = "msg me";
         if (images && images.length) {
@@ -1455,7 +1454,7 @@
           el.appendChild(strip);
         }
         if (text) el.appendChild(document.createTextNode(text));
-        el.appendChild(metaLine(new Date()));
+        el.appendChild(metaLine(when || new Date()));
         log.appendChild(el);
         scrollDown(true);
       }
@@ -1534,7 +1533,15 @@
             clearLog();
             (s.messages || []).forEach(function (m) {
               var ts = m.created_at || m.timestamp || m.created || null;
-              if (m.role === "user") { addText("me", m.content, ts); }
+              if (m.role === "user") {
+                // The proxy re-attaches stored image data-URLs (#202); Hermes
+                // persists each image as a "[screenshot]" placeholder, so strip
+                // those tokens from the displayed text when thumbnails render.
+                if (m.images && m.images.length) {
+                  var clean = (m.content || "").replace(/\[screenshot\]/g, "").replace(/\n+$/, "").trim();
+                  addUserTurn(clean, m.images, ts);
+                } else { addText("me", m.content, ts); }
+              }
               else if (m.role === "assistant") {
                 var el = document.createElement("div");
                 el.className = "msg sol";
