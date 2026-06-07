@@ -253,9 +253,14 @@
     .dots span:nth-child(3) { animation-delay: 0.4s; }
     @keyframes blink { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
 
-    form#composer {
-      display: flex; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--line);
+    /* Full-bleed composer bar: the background/border-top spans the viewport,
+       while the form + its sibling rows stay max-width:900px centered. */
+    .composer-bar {
+      border-top: 1px solid var(--line);
       background: var(--panel); backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass);
+    }
+    form#composer {
+      display: flex; gap: 8px; padding: 14px 18px;
       max-width: 900px; width: 100%; margin: 0 auto;
     }
     textarea#input {
@@ -680,19 +685,21 @@
         </span>
       </header>
       <div id="log" aria-live="polite"></div>
-      <div class="composer-row">
-        <span class="hint">Type <code>/help</code> for commands</span>
+      <div class="composer-bar">
+        <div class="composer-row">
+          <span class="hint">Type <code>/help</code> for commands</span>
+        </div>
+        <div class="attach-preview" id="attach-preview" hidden></div>
+        <form id="composer">
+          <div class="slash-menu" id="slash-menu" role="listbox" aria-label="Commands" hidden></div>
+          <button id="attach-btn" class="composer-icon" type="button" title="Bild anhängen" aria-label="Bild anhängen"><svg class="ic"><use href="#i-image"></use></svg></button>
+          <button id="mic-btn" class="composer-icon" type="button" title="Spracheingabe" aria-label="Spracheingabe"><svg class="ic"><use href="#i-mic"></use></svg></button>
+          <textarea id="input" rows="1" placeholder="Message Sol…  (/help for commands)" autofocus></textarea>
+          <button id="send" class="btn-primary" type="submit">Send</button>
+          <button id="stop" class="composer-icon stop" type="button" title="Antwort stoppen" aria-label="Antwort stoppen" hidden><svg class="ic"><use href="#i-stop"></use></svg></button>
+          <input id="file-input" type="file" accept="image/*" hidden />
+        </form>
       </div>
-      <div class="attach-preview" id="attach-preview" hidden></div>
-      <form id="composer">
-        <div class="slash-menu" id="slash-menu" role="listbox" aria-label="Commands" hidden></div>
-        <button id="attach-btn" class="composer-icon" type="button" title="Bild anhängen" aria-label="Bild anhängen"><svg class="ic"><use href="#i-image"></use></svg></button>
-        <button id="mic-btn" class="composer-icon" type="button" title="Spracheingabe" aria-label="Spracheingabe"><svg class="ic"><use href="#i-mic"></use></svg></button>
-        <textarea id="input" rows="1" placeholder="Message Sol…  (/help for commands)" autofocus></textarea>
-        <button id="send" class="btn-primary" type="submit">Send</button>
-        <button id="stop" class="composer-icon stop" type="button" title="Antwort stoppen" aria-label="Antwort stoppen" hidden><svg class="ic"><use href="#i-stop"></use></svg></button>
-        <input id="file-input" type="file" accept="image/*" hidden />
-      </form>
     </section>
 
     <section id="view-skills" class="view">
