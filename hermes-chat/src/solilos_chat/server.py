@@ -16,7 +16,7 @@ from typing import Any
 import aiohttp
 from aiohttp import web
 
-from solilos_chat import personalities, reasoning, skills
+from solilos_chat import compaction, personalities, reasoning, skills
 from solilos_chat.attachments import AttachmentStore, attach_to_messages
 from solilos_chat.hermes import HermesClient, HermesError
 from solilos_chat.logging import log
@@ -103,6 +103,7 @@ def build_app(
     agent_token: str = "",
     logout_url: str = "",
     context_window: int = 131072,
+    compaction_threshold: float = compaction.DEFAULT_THRESHOLD,
     attachments_dir: str = "/data/attachments",
     frame_ancestors: str = "'self'",
 ) -> web.Application:
@@ -116,6 +117,33 @@ def build_app(
     # breaks the loop and closes the upstream Hermes connection (closing that
     # connection is what actually interrupts the model's generation).
     cancels: dict[str, asyncio.Event] = {}
+
+    async def maybe_compact(
+        uid: str, session_id: str, system_prompt: str
+    ) -> tuple[str, bool]:
+        """Hard-cap trigger (#210): if an existing session's running token usage
+        is near the context-window cap, extract durable learnings to memory and
+        compact into a continuation session *before* the next turn runs.
+
+        Returns `(session_id, compacted)` — the continuation id when compaction
+        happened, else the original id unchanged. Failure to compact degrades to
+        "use the original session" (compact_session returns None), so a turn is
+        never lost or blocked by compaction.
+        """
+        try:
+            new_id = await compaction.compact_session(
+                hermes,
+                uid,
+                session_id,
+                base_system_prompt=system_prompt,
+                context_window=context_window,
+                threshold=compaction_threshold,
+            )
+        except HermesError:
+            return session_id, False
+        if new_id:
+            return new_id, True
+        return session_id, False
 
     async def index(_request: web.Request) -> web.Response:
         return web.FileResponse(STATIC_DIR / "index.html")
@@ -474,11 +502,16 @@ def build_app(
 
         clock = asyncio.get_event_loop().time
         t_start = clock() * 1000.0
+        compacted = False
         try:
             if not session_id:
                 session_id = await hermes.create_session(uid, system_prompt)
                 log.info("chat.session.created", uid=uid, session_id=session_id)
                 await hermes.set_title(session_id, uid, _title_from(text))
+            else:
+                session_id, compacted = await maybe_compact(
+                    uid, session_id, system_prompt
+                )
             reply = await hermes.chat(session_id, text, images, effort)
         except HermesError:
             return web.json_response(
@@ -492,7 +525,13 @@ def build_app(
         trace = _trace_from_phases([], total_ms)
 
         return web.json_response(
-            {"ok": True, "session_id": session_id, "reply": reply, "trace": trace}
+            {
+                "ok": True,
+                "session_id": session_id,
+                "reply": reply,
+                "trace": trace,
+                "compacted": compacted,
+            }
         )
 
     async def chat_stream(request: web.Request) -> web.StreamResponse:
@@ -540,12 +579,19 @@ def build_app(
         answer_buf = ""
         cancelled = False
         try:
+            compacted = False
             if not session_id:
                 session_id = await hermes.create_session(uid, system_prompt)
                 log.info("chat.session.created", uid=uid, session_id=session_id)
                 await hermes.set_title(session_id, uid, _title_from(text))
+            else:
+                session_id, compacted = await maybe_compact(
+                    uid, session_id, system_prompt
+                )
             cancels[session_id] = cancel
-            await _send_event(resp, "session", {"session_id": session_id})
+            await _send_event(
+                resp, "session", {"session_id": session_id, "compacted": compacted}
+            )
             # Persist the attachment once the turn is under way (Hermes has the
             # user message; we hold the pixels it drops) so history re-renders
             # the thumbnail after a refresh (#202).
@@ -895,6 +941,7 @@ async def serve(
     agent_token: str = "",
     logout_url: str = "",
     context_window: int = 131072,
+    compaction_threshold: float = compaction.DEFAULT_THRESHOLD,
     attachments_dir: str = "/data/attachments",
     frame_ancestors: str = "'self'",
 ) -> None:
@@ -910,6 +957,7 @@ async def serve(
         agent_token=agent_token,
         logout_url=logout_url,
         context_window=context_window,
+        compaction_threshold=compaction_threshold,
         attachments_dir=attachments_dir,
         frame_ancestors=frame_ancestors,
     )
