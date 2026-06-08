@@ -180,7 +180,11 @@ class HermesClient:
                     )
 
     async def chat(
-        self, session_id: str, text: str, images: list[str] | None = None
+        self,
+        session_id: str,
+        text: str,
+        images: list[str] | None = None,
+        reasoning_effort: str = "none",
     ) -> str:
         """Send one turn to an existing session; return the reply text.
 
@@ -188,17 +192,27 @@ class HermesClient:
         chat panel, #183); folded into `input` as OpenAI content parts — the
         shape Hermes session-chat actually consumes (#202) — so a vision model
         can act on the attachment.
+
+        `reasoning_effort` (#222) is the per-turn knob: "none" (fast, no
+        thinking generated) by default; "low"/"high" make the model reason and
+        the UI render the block.
         """
         url = f"{self._base_url}/api/sessions/{session_id}/chat"
         async with aiohttp.ClientSession(timeout=self._timeout) as client:
             async with client.post(
-                url, json=_chat_body(text, images), headers=self._headers()
+                url,
+                json=_chat_body(text, images, reasoning_effort),
+                headers=self._headers(),
             ) as resp:
                 body = await self._json_or_raise(resp, "chat")
         return _extract_reply(body)
 
     async def chat_stream(
-        self, session_id: str, text: str, images: list[str] | None = None
+        self,
+        session_id: str,
+        text: str,
+        images: list[str] | None = None,
+        reasoning_effort: str = "none",
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream one turn; yield parsed Hermes SSE events as dicts.
 
@@ -210,7 +224,9 @@ class HermesClient:
         url = f"{self._base_url}/api/sessions/{session_id}/chat/stream"
         async with aiohttp.ClientSession(timeout=self._timeout) as client:
             async with client.post(
-                url, json=_chat_body(text, images), headers=self._headers()
+                url,
+                json=_chat_body(text, images, reasoning_effort),
+                headers=self._headers(),
             ) as resp:
                 if resp.status >= 400:
                     detail = (await resp.text())[:500]
@@ -263,7 +279,9 @@ async def _iter_sse(stream: aiohttp.StreamReader) -> AsyncIterator[dict[str, Any
         yield {"type": event or "message", "data": _maybe_json(payload)}
 
 
-def _chat_body(text: str, images: list[str] | None) -> dict[str, Any]:
+def _chat_body(
+    text: str, images: list[str] | None, reasoning_effort: str = "none"
+) -> dict[str, Any]:
     """Build the Hermes chat body.
 
     Text-only turns send `input` as a plain string (request shape identical to
@@ -274,13 +292,24 @@ def _chat_body(text: str, images: list[str] | None) -> dict[str, Any]:
     `_session_chat_user_message` reads `message`/`input` and runs it through
     `_normalize_multimodal_content`, which requires full `data:image/...` URLs
     (the `data:` prefix must stay) and ignores any top-level `images` key (#202).
+
+    `reasoning_effort` (#222) rides the body per turn. When it is a real
+    reasoning level (not "none") we also set `show_reasoning: true` (#224) so
+    Hermes surfaces the thinking block — the live config has it off, so without
+    this the UI would have nothing to render. A fast ("none") turn sends neither
+    `show_reasoning` nor a thinking block, so it stays clean.
     """
     if not images:
-        return {"input": text}
-    parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
-    for img in images:
-        parts.append({"type": "image_url", "image_url": {"url": img}})
-    return {"input": parts}
+        body: dict[str, Any] = {"input": text}
+    else:
+        parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        for img in images:
+            parts.append({"type": "image_url", "image_url": {"url": img}})
+        body = {"input": parts}
+    body["reasoning_effort"] = reasoning_effort
+    if reasoning_effort != "none":
+        body["show_reasoning"] = True
+    return body
 
 
 def _maybe_json(payload: str) -> Any:

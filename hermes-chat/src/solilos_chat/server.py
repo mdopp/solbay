@@ -16,7 +16,7 @@ from typing import Any
 import aiohttp
 from aiohttp import web
 
-from solilos_chat import personalities, skills
+from solilos_chat import personalities, reasoning, skills
 from solilos_chat.attachments import AttachmentStore, attach_to_messages
 from solilos_chat.hermes import HermesClient, HermesError
 from solilos_chat.logging import log
@@ -416,13 +416,18 @@ def build_app(
             text = _IMAGE_PROMPT
         session_id = str(body.get("session_id") or "")
         system_prompt = personalities.system_prompt_for(body.get("personality"))
+        effort = reasoning.choose_effort(
+            text,
+            selector=body.get("reasoning"),
+            admin=is_admin(request, remote_groups_header, admin_group),
+        )
 
         try:
             if not session_id:
                 session_id = await hermes.create_session(uid, system_prompt)
                 log.info("chat.session.created", uid=uid, session_id=session_id)
                 await hermes.set_title(session_id, uid, _title_from(text))
-            reply = await hermes.chat(session_id, text, images)
+            reply = await hermes.chat(session_id, text, images, effort)
         except HermesError:
             return web.json_response(
                 {"ok": False, "reason": "hermes_unavailable"}, status=502
@@ -448,6 +453,11 @@ def build_app(
             text = _IMAGE_PROMPT
         session_id = str(body.get("session_id") or "")
         system_prompt = personalities.system_prompt_for(body.get("personality"))
+        effort = reasoning.choose_effort(
+            text,
+            selector=body.get("reasoning"),
+            admin=is_admin(request, remote_groups_header, admin_group),
+        )
 
         resp = web.StreamResponse(
             headers={
@@ -470,7 +480,7 @@ def build_app(
             # user message; we hold the pixels it drops) so history re-renders
             # the thumbnail after a refresh (#202).
             attachments.add(session_id, images)
-            stream = hermes.chat_stream(session_id, text, images)
+            stream = hermes.chat_stream(session_id, text, images, effort)
             async for event in stream:
                 if cancel.is_set():
                     # Closing the upstream generator aborts the Hermes/Ollama

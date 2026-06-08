@@ -686,6 +686,13 @@
           <span class="chat-search-count" id="chat-search-count" hidden></span>
         </span>
         <span class="persona">
+          <label for="reasoning-mode">Modus</label>
+          <select id="reasoning-mode" aria-label="Reasoning mode for this chat" title="Schnell antwortet ohne Nachdenken; Gründlich lässt Sol nachdenken und zeigt die Gedanken.">
+            <option value="none">Schnell</option>
+            <option value="high">Gründlich</option>
+          </select>
+        </span>
+        <span class="persona">
           <label for="personality">Persona</label>
           <select id="personality" aria-label="Personality for new sessions"></select>
         </span>
@@ -793,7 +800,7 @@
         <div class="pref-row">
           <div class="pref-label">
             <div class="pref-name">Thinking blocks</div>
-            <div class="pref-desc">Reasoning-capable models (e.g. gemma4) can think out loud in <code>&lt;thinking&gt;</code> blocks before answering. Choose how to show that.</div>
+            <div class="pref-desc">When the chat runs in <strong>Gründlich</strong> mode (the Modus selector in the chat header), Sol thinks out loud in <code>&lt;thinking&gt;</code> blocks before answering. Choose how those are shown. In <strong>Schnell</strong> mode there is no thinking block.</div>
           </div>
           <div class="seg" id="thinking-seg" role="radiogroup" aria-label="Thinking blocks">
             <button type="button" data-mode="show" role="radio">Show</button>
@@ -848,11 +855,28 @@
       var newBtn = document.getElementById("new-session");
       var backdrop = document.getElementById("backdrop");
       var personalitySel = document.getElementById("personality");
+      var reasoningSel = document.getElementById("reasoning-mode");
       var adminBadge = document.getElementById("admin-badge");
       var sessionId = null;
       var slash = { refresh: function () {}, handleKey: function () { return false; } };
 
       function currentPersonality() { return personalitySel.value || "sol"; }
+
+      // ---- Reasoning selector (#224, "auswählbar") ----
+      // Per-conversation fast/thorough override that the backend (#222) honours
+      // ahead of its adaptive default: "none" (Schnell, the default — no
+      // thinking generated, ~1.5-3s) vs "high" (Gründlich — the model reasons
+      // and the chat renders the thinking block). Persisted locally; sent with
+      // every turn as `reasoning`.
+      var REASONING_VALUES = { none: 1, low: 1, high: 1 };
+      (function () {
+        var saved = localStorage.getItem("sol.reasoning");
+        reasoningSel.value = REASONING_VALUES[saved] ? saved : "none";
+      })();
+      reasoningSel.addEventListener("change", function () {
+        localStorage.setItem("sol.reasoning", reasoningSel.value);
+      });
+      function currentReasoning() { return reasoningSel.value || "none"; }
 
       // ---- Thinking-mode display preference (#185) ----
       // Reasoning models (gemma4 etc.) emit a <thinking>…</thinking> (or
@@ -1043,7 +1067,7 @@
       });
 
       function streamChat(text, msg, images, signal) {
-        var payload = { input: text, session_id: sessionId, personality: currentPersonality() };
+        var payload = { input: text, session_id: sessionId, personality: currentPersonality(), reasoning: currentReasoning() };
         if (images && images.length) payload.images = images;
         return fetch("/api/chat/stream", {
           method: "POST",

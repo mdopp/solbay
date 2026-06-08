@@ -349,6 +349,12 @@ def write_config_yaml(
         "  force_ipv4: true\n"
         "display:\n"
         "  personality: default\n"
+        # Global default OFF (#222/#224): reasoning is surfaced PER REQUEST by
+        # the proxies (they send `show_reasoning: true` only on a thorough turn),
+        # so fast tool turns stay clean and a thorough turn still renders its
+        # thinking. Leaving this false avoids surfacing an (empty) block on the
+        # common fast turn.
+        "  show_reasoning: false\n"
     )
     if custom_providers_block:
         content += "\n" + custom_providers_block

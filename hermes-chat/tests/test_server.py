@@ -76,6 +76,7 @@ class _FakeHermes:
         self.titles = []
         self.deleted = []
         self.images = []
+        self.efforts = []
         self._events = events or []
         # store: list of {id, user_id, title, last_activity, messages}
         self._store = store or []
@@ -104,14 +105,16 @@ class _FakeHermes:
             }
         ]
 
-    async def chat(self, session_id, text, images=None):
+    async def chat(self, session_id, text, images=None, reasoning_effort="none"):
         self.turns.append((session_id, text))
         self.images.append(images or [])
+        self.efforts.append(reasoning_effort)
         return f"echo: {text}"
 
-    async def chat_stream(self, session_id, text, images=None):
+    async def chat_stream(self, session_id, text, images=None, reasoning_effort="none"):
         self.turns.append((session_id, text))
         self.images.append(images or [])
+        self.efforts.append(reasoning_effort)
         for event in self._events:
             yield event
 
@@ -267,8 +270,9 @@ def test_maybe_json():
 
 
 def test_chat_body_text_only_is_plain_string():
-    assert _chat_body("hi", None) == {"input": "hi"}
-    assert _chat_body("hi", []) == {"input": "hi"}
+    # Default fast turn: reasoning_effort "none", no thinking surfaced (#222).
+    assert _chat_body("hi", None) == {"input": "hi", "reasoning_effort": "none"}
+    assert _chat_body("hi", []) == {"input": "hi", "reasoning_effort": "none"}
 
 
 def test_chat_body_images_become_content_parts():
@@ -282,9 +286,23 @@ def test_chat_body_images_become_content_parts():
                 "type": "image_url",
                 "image_url": {"url": "data:image/png;base64,AAAA"},
             },
-        ]
+        ],
+        "reasoning_effort": "none",
     }
     assert "images" not in body
+
+
+def test_chat_body_reasoning_surfaces_thinking_when_on():
+    # A reasoning turn asks Hermes to surface the block (#224) so the UI can
+    # render it — the live config has show_reasoning off, so without this the
+    # thinking would never reach the client.
+    assert _chat_body("explain", None, "high") == {
+        "input": "explain",
+        "reasoning_effort": "high",
+        "show_reasoning": True,
+    }
+    # Fast turn carries no show_reasoning and no thinking block.
+    assert "show_reasoning" not in _chat_body("hi", None, "none")
 
 
 def test_images_from_keeps_data_url_prefix_and_caps():
@@ -341,6 +359,54 @@ async def test_chat_image_only_uses_default_prompt(aiohttp_client, tmp_path):
     assert resp.status == 200
     assert fake.turns == [("sess-1", _IMAGE_PROMPT)]
     assert fake.images == [["QQ"]]
+
+
+async def test_chat_defaults_to_fast_reasoning(aiohttp_client, tmp_path):
+    fake = _FakeHermes()
+    app = build_app(
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
+    )
+    client = await aiohttp_client(app)
+    resp = await client.post("/api/chat", json={"input": "welche Lichter sind an"})
+    assert resp.status == 200
+    assert fake.efforts == ["none"]
+
+
+async def test_chat_selector_overrides_to_thorough(aiohttp_client, tmp_path):
+    fake = _FakeHermes()
+    app = build_app(
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
+    )
+    client = await aiohttp_client(app)
+    # The per-conversation selector (#224) wins over the fast default.
+    resp = await client.post(
+        "/api/chat", json={"input": "welche Lichter sind an", "reasoning": "high"}
+    )
+    assert resp.status == 200
+    assert fake.efforts == ["high"]
+
+
+async def test_chat_admin_escalates_reasoning(aiohttp_client, tmp_path):
+    fake = _FakeHermes()
+    app = build_app(
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
+    )
+    client = await aiohttp_client(app)
+    # Admin/diagnose context auto-escalates (#222) when no selector is sent.
+    resp = await client.post(
+        "/api/chat", json={"input": "status?"}, headers={"Remote-Groups": "admins"}
+    )
+    assert resp.status == 200
+    assert fake.efforts == ["high"]
 
 
 async def test_chat_no_text_no_images_rejected(aiohttp_client):

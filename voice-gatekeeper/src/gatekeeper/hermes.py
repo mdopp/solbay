@@ -26,7 +26,7 @@ import re
 from typing import Any
 
 import httpx
-from gatekeeper import marker
+from gatekeeper import marker, reasoning
 from gatekeeper.logging import log
 
 # A "good" short reply is usually a confirmation ("ok", "done", "sure",
@@ -82,6 +82,11 @@ class HermesClient:
         location: str | None = None,
     ) -> str:
         conv_key = uid or endpoint
+        # Adaptive reasoning routing (#222): default FAST ("none") for voice;
+        # escalate to thorough only on an explicit cue in the transcript.
+        effort = reasoning.choose_effort(text)
+        if effort != reasoning.FAST:
+            log.info("gatekeeper.hermes.reasoning", trace_id=trace_id, effort=effort)
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             if self._fast_model:
                 fast_reply = await self._turn(
@@ -91,6 +96,7 @@ class HermesClient:
                     text=text,
                     trace_id=trace_id,
                     model=self._fast_model,
+                    effort=effort,
                 )
                 if not _is_low_quality_reply(fast_reply):
                     return fast_reply
@@ -107,6 +113,7 @@ class HermesClient:
                 text=text,
                 trace_id=trace_id,
                 model=None,
+                effort=effort,
             )
 
     async def _turn(
@@ -118,6 +125,7 @@ class HermesClient:
         text: str,
         trace_id: str,
         model: str | None,
+        effort: str,
     ) -> str:
         session_id = self._sessions.get(conv_key)
         if session_id is None:
@@ -126,7 +134,7 @@ class HermesClient:
                 return ""
             self._sessions[conv_key] = session_id
 
-        response = await self._chat(client, session_id, text)
+        response = await self._chat(client, session_id, text, effort)
         if response is not None and response.status_code == 404:
             # Session expired upstream — recreate once and retry the turn.
             session_id = await self._create_session(client, uid, trace_id, model)
@@ -134,7 +142,7 @@ class HermesClient:
                 self._sessions.pop(conv_key, None)
                 return ""
             self._sessions[conv_key] = session_id
-            response = await self._chat(client, session_id, text)
+            response = await self._chat(client, session_id, text, effort)
 
         if response is None:
             return ""
@@ -175,10 +183,22 @@ class HermesClient:
         return _extract_session_id(response.json())
 
     async def _chat(
-        self, client: httpx.AsyncClient, session_id: str, text: str
+        self, client: httpx.AsyncClient, session_id: str, text: str, effort: str
     ) -> httpx.Response:
         url = f"{self._base_url}/api/sessions/{session_id}/chat"
-        return await client.post(url, json={"input": text}, headers=self._headers())
+        return await client.post(
+            url, json=_chat_body(text, effort), headers=self._headers()
+        )
+
+
+def _chat_body(text: str, effort: str) -> dict[str, Any]:
+    """Build the session-chat body, carrying the per-turn reasoning_effort.
+
+    Voice never surfaces the reasoning block (it would be spoken aloud), so we
+    set `reasoning_effort` but never `show_reasoning`: on a THOROUGH turn the
+    model reasons internally and only the answer reaches TTS.
+    """
+    return {"input": text, "reasoning_effort": effort}
 
 
 def _extract_session_id(body: Any) -> str:
