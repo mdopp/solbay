@@ -254,6 +254,59 @@ async def test_persons_endpoint_unions_used_and_seed_with_prefix(
     assert values == ["anna", "arno"]  # used + seed, prefix-filtered, sorted
 
 
+# ---- session tag-cloud endpoint (#279c) ----
+
+
+async def test_session_mentions_endpoint_lists_with_refs(aiohttp_client, tmp_path):
+    db = _db(tmp_path)
+    mentions_store.record_mentions(db, "s1", "mdopp", ["urlaub"], ["anna"])
+    mentions_store.record_mentions(db, "s1", "mdopp", ["reise"], [])
+    client = await aiohttp_client(_app(db))
+    resp = await client.get(
+        "/api/sessions/s1/mentions", headers={"Remote-User": "mdopp"}
+    )
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["ok"] is True
+    # Each item carries the kind/value + the message_ref to jump to.
+    assert body["mentions"] == [
+        {"kind": "person", "value": "anna", "message_ref": 0},
+        {"kind": "tag", "value": "urlaub", "message_ref": 0},
+        {"kind": "tag", "value": "reise", "message_ref": 1},
+    ]
+
+
+async def test_session_mentions_endpoint_scoped_per_resident(aiohttp_client, tmp_path):
+    db = _db(tmp_path)
+    mentions_store.record_mentions(db, "s1", "mdopp", ["urlaub"], [])
+    mentions_store.record_mentions(db, "s1", "lena", ["ferien"], [])
+    client = await aiohttp_client(_app(db))
+    resp = await client.get(
+        "/api/sessions/s1/mentions", headers={"Remote-User": "lena"}
+    )
+    body = await resp.json()
+    # lena sees only her own mentions in the shared session.
+    assert body["mentions"] == [{"kind": "tag", "value": "ferien", "message_ref": 0}]
+
+
+async def test_session_mentions_endpoint_degrades_when_db_missing(
+    aiohttp_client, tmp_path
+):
+    app = build_app(
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        solilos_db_path=str(tmp_path / "nope.db"),
+    )
+    client = await aiohttp_client(app)
+    resp = await client.get(
+        "/api/sessions/s1/mentions", headers={"Remote-User": "mdopp"}
+    )
+    assert resp.status == 200
+    body = await resp.json()
+    assert body == {"ok": True, "mentions": []}
+
+
 # ---- chat turn persists mentions ----
 
 

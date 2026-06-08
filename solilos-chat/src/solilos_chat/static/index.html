@@ -357,6 +357,37 @@
     }
     .mention.person { background: var(--bubble-sol); color: var(--ink); }
 
+    /* Tag-cloud (#279c): the active chat's #tags / @persons as jump-to-message
+       chips. Responsive — a right-side gutter panel when the viewport is wide
+       enough to clear the centered 900px log, a strip above the composer
+       otherwise. Both share #tag-cloud-chip styling; the layout containers are
+       CSS-toggled so only one shows at a time. */
+    .cloud-chip {
+      cursor: pointer; border: 1px solid var(--line); border-radius: 999px;
+      padding: 2px 9px; font-size: 12px; font-weight: 500; line-height: 1.6;
+      background: var(--accent-soft); color: var(--accent); white-space: nowrap;
+    }
+    .cloud-chip.person { background: var(--bubble-sol); color: var(--ink); }
+    .cloud-chip:hover { box-shadow: 0 0 0 2px var(--accent); }
+    /* Desktop right-side panel: fixed in the gutter beside the centered log,
+       only when there's room (≥1240px clears 900px log + a 280px column). */
+    #tag-cloud {
+      display: none; position: fixed; top: 120px; right: 24px; width: 232px;
+      max-height: 60vh; overflow-y: auto; z-index: 15;
+      padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius);
+      background: var(--panel); backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass);
+      box-shadow: var(--shadow-card);
+    }
+    #tag-cloud .cloud-head { font-size: 11px; color: var(--muted); margin-bottom: 8px; letter-spacing: 0.3px; text-transform: uppercase; }
+    #tag-cloud .cloud-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    @media (min-width: 1240px) { #tag-cloud:not([hidden]) { display: block; } }
+    /* Narrow/mobile strip directly above the composer. */
+    #tag-cloud-strip {
+      display: none; max-width: 900px; width: 100%; margin: 0 auto;
+      padding: 8px 18px 0; gap: 6px; flex-wrap: wrap; align-items: center;
+    }
+    @media (max-width: 1239px) { #tag-cloud-strip:not([hidden]) { display: flex; } }
+
     /* Composer mic/attach icon buttons (#183, #184). */
     .composer-tools { display: flex; gap: 8px; flex: 0 0 auto; align-items: stretch; }
     /* When the textarea has grown tall, stack the icons and pin them to the
@@ -779,7 +810,9 @@
         <button class="icon-btn embed-settings" id="embed-settings" type="button" title="Settings" aria-label="Settings"><svg class="ic"><use href="#i-settings"></use></svg></button>
       </header>
       <div id="log" aria-live="polite"></div>
+      <aside id="tag-cloud" aria-label="Erwähnungen in diesem Chat" hidden></aside>
       <div class="composer-bar">
+        <div id="tag-cloud-strip" aria-label="Erwähnungen in diesem Chat" hidden></div>
         <div class="attach-preview" id="attach-preview" hidden></div>
         <form id="composer">
           <div class="slash-menu" id="slash-menu" role="listbox" aria-label="Commands" hidden></div>
@@ -1013,6 +1046,8 @@
       var personaCtrl = document.getElementById("persona-control");
       var topicSel = document.getElementById("topic-primary");
       var topicTags = document.getElementById("topic-tags");
+      var tagCloudPanel = document.getElementById("tag-cloud");
+      var tagCloudStrip = document.getElementById("tag-cloud-strip");
       var topicsList = [];
       var topicsBySlug = {};
 
@@ -1304,7 +1339,7 @@
       // hierarchy "/" and hyphen, never mid-word or an email's @ (#279).
       var MENTION_RE = /(^|[^\w/])([#@])([\w/-]+)/g;
       function appendMentionText(el, text) {
-        var last = 0, m;
+        var last = 0, m, count = 0;
         MENTION_RE.lastIndex = 0;
         while ((m = MENTION_RE.exec(text))) {
           var start = m.index + m[1].length; // skip the leading boundary char
@@ -1314,14 +1349,77 @@
           span.textContent = m[2] + m[3];
           el.appendChild(span);
           last = start + m[2].length + m[3].length;
+          count++;
         }
         if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+        return count;
+      }
+
+      // Jump-to-message ref (#279c). The server stamps every user turn that
+      // carried a mention with a per-session ordinal (mentions.message_ref,
+      // 0,1,2,… over turns-with-mentions). Mirror it on the rendered bubbles so
+      // a tag-cloud chip can scroll to the message a tag/person came from: the
+      // Nth user bubble that contains a mention gets data-mention-ref=N. Reset
+      // on clearLog (a fresh transcript restarts the count).
+      var mentionRefSeq = 0;
+      function tagUserBubble(el, hadMentions) {
+        if (hadMentions) el.setAttribute("data-mention-ref", String(mentionRefSeq++));
+      }
+
+      // ---- Tag-cloud (#279c): the active chat's #tags / @persons as chips that
+      // jump to the message they came from. Loaded on session open/switch and
+      // after each completed turn. Responsive layout (gutter panel vs. strip
+      // above the composer) is pure CSS; the same chips fill both containers. ----
+      function jumpToMention(ref) {
+        var target = log.querySelector('[data-mention-ref="' + ref + '"]');
+        if (!target) return;
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+        target.classList.add("search-current");
+        setTimeout(function () { target.classList.remove("search-current"); }, 1600);
+      }
+      function fillCloud(container, items) {
+        container.textContent = "";
+        if (!items.length) { container.hidden = true; return; }
+        if (container === tagCloudPanel) {
+          var head = document.createElement("div");
+          head.className = "cloud-head";
+          head.textContent = "Erwähnungen";
+          container.appendChild(head);
+        }
+        var chips = container === tagCloudPanel
+          ? Object.assign(document.createElement("div"), { className: "cloud-chips" })
+          : container;
+        items.forEach(function (it) {
+          var chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "cloud-chip" + (it.kind === "person" ? " person" : "");
+          chip.textContent = (it.kind === "person" ? "@" : "#") + it.value;
+          chip.title = "Zur Nachricht springen";
+          chip.addEventListener("click", function () { jumpToMention(it.message_ref); });
+          chips.appendChild(chip);
+        });
+        if (chips !== container) container.appendChild(chips);
+        container.hidden = false;
+      }
+      function loadTagCloud() {
+        // Incognito chats keep no durable mentions; a fresh chat has no id yet.
+        if (!sessionId || incognito) { fillCloud(tagCloudPanel, []); fillCloud(tagCloudStrip, []); return; }
+        var sid = sessionId;
+        fetch("/api/sessions/" + encodeURIComponent(sid) + "/mentions")
+          .then(function (r) { return r.ok ? r.json() : { mentions: [] }; })
+          .then(function (j) {
+            if (sid !== sessionId) return; // a switch raced ahead — drop stale
+            var items = (j && j.mentions) || [];
+            fillCloud(tagCloudPanel, items);
+            fillCloud(tagCloudStrip, items);
+          })
+          .catch(function () { /* leave the cloud as-is on a transient error */ });
       }
 
       function addText(role, text, when) {
         var el = document.createElement("div");
         el.className = "msg " + role;
-        if (role === "me") appendMentionText(el, text);
+        if (role === "me") tagUserBubble(el, appendMentionText(el, text) > 0);
         else el.appendChild(document.createTextNode(text));
         if (role === "me" || role === "sol") el.appendChild(metaLine(when));
         log.appendChild(el);
@@ -1958,7 +2056,7 @@
         activeTurn = turn;
         setStreaming(true);
         streamChat(text, msg, images, controller.signal)
-          .then(function () { if (!turn.stopped) msg.finish(); if (firstTurn) loadSessions(); })
+          .then(function () { if (!turn.stopped) msg.finish(); if (firstTurn) loadSessions(); loadTagCloud(); })
           .catch(function () { if (!turn.stopped) msg.fail("Network error. Please try again."); })
           .finally(function () { if (activeTurn === turn) setStreaming(false); });
       });
@@ -1979,7 +2077,7 @@
           });
           el.appendChild(strip);
         }
-        if (text) appendMentionText(el, text);
+        if (text) tagUserBubble(el, appendMentionText(el, text) > 0);
         el.appendChild(metaLine(when || new Date()));
         log.appendChild(el);
         scrollDown(true);
@@ -2083,7 +2181,7 @@
           .catch(function () { addText("system", "Could not delete that chat."); });
       }
 
-      function clearLog() { log.textContent = ""; }
+      function clearLog() { log.textContent = ""; mentionRefSeq = 0; }
 
       function openSession(id) {
         if (send.disabled) return;
@@ -2126,6 +2224,7 @@
             scrollDown(true);
             loadSessions();
             syncSessionTopics();
+            loadTagCloud();
             input.focus();
           })
           .catch(function () { addText("system", "Could not open that chat."); });
@@ -2158,6 +2257,7 @@
         clearLog();
         loadSessions();
         syncSessionTopics();
+        loadTagCloud();
         closeRail();
         showView("chat");
         input.focus();
@@ -2172,6 +2272,7 @@
         applyIncognito(true);
         topicCtrl.hidden = false;
         loadSessions();
+        loadTagCloud();
         closeRail();
         showView("chat");
         input.focus();

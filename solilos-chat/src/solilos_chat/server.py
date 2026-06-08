@@ -804,6 +804,15 @@ def build_app(
             {"ok": True, "persons": [{"kind": "person", "value": v} for v in merged]}
         )
 
+    async def session_mentions(request: web.Request) -> web.Response:
+        # The tag-cloud for one chat (#279c): the resident's `#tag` / `@person`
+        # mentions in this session, each with the message_ref that carried it
+        # (first appearance) for jump-to-message. Per-resident scope.
+        uid = resolve_uid(request, remote_user_header, default_uid)
+        session_id = request.match_info["session_id"]
+        items = mentions_store.list_session_mentions(solilos_db_path, session_id, uid)
+        return web.json_response({"ok": True, "mentions": items})
+
     async def chat(request: web.Request) -> web.Response:
         uid = resolve_uid(request, remote_user_header, default_uid)
         try:
@@ -1029,6 +1038,7 @@ def build_app(
     app.router.add_get("/api/topics/{slug:.+}/items", topic_items)
     app.router.add_get("/api/mentions/tags", mentions_tags)
     app.router.add_get("/api/mentions/persons", mentions_persons)
+    app.router.add_get("/api/sessions/{session_id}/mentions", session_mentions)
     app.router.add_post("/api/chat", chat)
     app.router.add_post("/api/chat/stream", chat_stream)
     app.router.add_post("/api/chat/cancel", cancel_chat)
