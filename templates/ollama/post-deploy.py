@@ -333,8 +333,9 @@ def render_gpu_container_unit(port: str, data_dir: str) -> str:
     rendered here too). Kept pure so the needs-rewrite comparison and the
     write share one source of truth."""
     context_length = env("OLLAMA_CONTEXT_LENGTH", "131072")
-    keep_alive = env("OLLAMA_KEEP_ALIVE", "60m")
+    keep_alive = env("OLLAMA_KEEP_ALIVE", "24h")
     flash_attention = env("OLLAMA_FLASH_ATTENTION", "1")
+    max_loaded_models = env("OLLAMA_MAX_LOADED_MODELS", "1")
     return (
         "[Unit]\n"
         "Description=Ollama (Local LLM Server, GPU passthrough #1026 fixup)\n"
@@ -351,9 +352,15 @@ def render_gpu_container_unit(port: str, data_dir: str) -> str:
         "# it the GPU Quadlet stays at 4096 and Hermes loops at 1 token (#146).\n"
         f"Environment=OLLAMA_CONTEXT_LENGTH={context_length}\n"
         "# Keep a model loaded after its last request so a conversational\n"
-        "# pause doesn't pay a cold model reload next turn (stock 5m evicts\n"
-        "# too soon). 60m, not -1, so a co-resident idle model can release.\n"
+        "# pause — or an overnight gap — doesn't pay a cold model reload next\n"
+        "# turn (stock 5m evicts too soon). 24h (#268): with\n"
+        "# MAX_LOADED_MODELS=1 the old co-residency concern that capped this\n"
+        "# at 60m is gone.\n"
         f"Environment=OLLAMA_KEEP_ALIVE={keep_alive}\n"
+        "# Cap resident models at one chat model (#268 anti-eviction): a\n"
+        "# secondary chat model can never evict the cached-prefix model. The\n"
+        "# embed model runs its own runner and isn't counted here.\n"
+        f"Environment=OLLAMA_MAX_LOADED_MODELS={max_loaded_models}\n"
         "# Flash attention — negligible speed change here but harmless and\n"
         "# the prerequisite for optional KV-cache quant.\n"
         f"Environment=OLLAMA_FLASH_ATTENTION={flash_attention}\n"

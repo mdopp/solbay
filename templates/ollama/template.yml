@@ -6,7 +6,7 @@ metadata:
     app: ollama
   annotations:
     servicebay.label: "AI Engine (Ollama)"
-    servicebay.schema-version: "4"
+    servicebay.schema-version: "5"
     servicebay.ports: "{{OLLAMA_PORT}}/tcp"
     # No `servicebay.tier` — Ollama is opt-in AI infrastructure, not a
     # platform foundation. Bind it to 127.0.0.1 by default (see
@@ -46,12 +46,19 @@ spec:
     # per-request num_ctx — only this env-set default actually applies.
     - name: OLLAMA_CONTEXT_LENGTH
       value: "{{OLLAMA_CONTEXT_LENGTH}}"
-    # Keep a model loaded after its last request so a conversational pause
-    # doesn't pay a cold model RELOAD next turn (stock 5m evicts too soon).
-    # 60m, not -1: both models can be co-resident @128k (tight VRAM), so an
-    # idle one should still be allowed to release. See OLLAMA_KEEP_ALIVE.
+    # Keep a model loaded after its last request so a conversational pause —
+    # or an overnight gap — doesn't pay a cold model RELOAD next turn (stock
+    # 5m evicts too soon). 24h (#268): with MAX_LOADED_MODELS=1 only one chat
+    # model is ever resident, so the old co-residency VRAM concern that capped
+    # this at 60m is gone. See OLLAMA_KEEP_ALIVE.
     - name: OLLAMA_KEEP_ALIVE
       value: "{{OLLAMA_KEEP_ALIVE}}"
+    # Cap resident models at one chat model (#268 anti-eviction): a secondary
+    # chat model can never co-reside and evict the cached-prefix model under
+    # the tight 128k VRAM footprint. The embed model runs its own runner and
+    # is not counted against this slot. See OLLAMA_MAX_LOADED_MODELS.
+    - name: OLLAMA_MAX_LOADED_MODELS
+      value: "{{OLLAMA_MAX_LOADED_MODELS}}"
     # Flash attention: negligible speed change on this GPU class but
     # harmless, and the prerequisite for optional KV-cache quant.
     - name: OLLAMA_FLASH_ATTENTION
