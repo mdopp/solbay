@@ -738,6 +738,10 @@ def build_app(
         t_start = clock() * 1000.0
         compacted = False
         try:
+            # Only a missing session_id starts a fresh Hermes session; turn 2+
+            # carry the same id back, so consecutive turns reuse one warm
+            # Hermes session (and its KV prefix cache). A cold turn-2 TTFT is
+            # therefore Ollama model eviction, not a per-turn session (#268).
             if not session_id:
                 session_id = await create_turn_session(
                     uid, topic_slug, body.get("personality"), effort, text, ephemeral

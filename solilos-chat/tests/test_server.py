@@ -704,6 +704,43 @@ async def test_subsequent_turn_reuses_session(aiohttp_client):
     assert fake.titles == []
 
 
+async def test_two_consecutive_turns_share_one_session(aiohttp_client):
+    # The operator's #268 scenario: a 2nd turn ("welche lichter sind an", asked
+    # twice) in the same chat. The browser sends back the session_id it got from
+    # turn 1, so turn 2 reuses that warm Hermes session — one create, both turns
+    # on the same id. A cold turn-2 TTFT is model eviction, not a session bug.
+    fake = _FakeHermes()
+    app = build_app(
+        hermes=fake, remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+
+    first = await (
+        await client.post(
+            "/api/chat",
+            json={"input": "welche lichter sind an"},
+            headers={"Remote-User": "mdopp"},
+        )
+    ).json()
+    sid = first["session_id"]
+
+    second = await (
+        await client.post(
+            "/api/chat",
+            json={"input": "welche lichter sind an", "session_id": sid},
+            headers={"Remote-User": "mdopp"},
+        )
+    ).json()
+
+    assert second["session_id"] == sid
+    # Exactly one session was created across both turns.
+    assert fake.created == ["mdopp"]
+    _assert_turns(
+        fake.turns,
+        [(sid, "welche lichter sind an"), (sid, "welche lichter sind an")],
+    )
+
+
 async def test_empty_input_rejected(aiohttp_client):
     fake = _FakeHermes()
     app = build_app(
