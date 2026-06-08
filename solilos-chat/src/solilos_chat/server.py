@@ -242,7 +242,13 @@ def build_app(
         model, system_prompt, primary = await new_session_bindings(
             topic_slug, personality_id, effort
         )
-        session_id = await hermes.create_session(uid, system_prompt, model=model)
+        # Born with a unique marker-embedded title (not the bare `[uid:...]`
+        # marker), so a first turn can never 400 against an abandoned
+        # bare-marker stub already holding it — the same collision #267 fixed
+        # for the compaction path, here on the main first-turn path (#277).
+        session_id = await hermes.create_session(
+            uid, system_prompt, model=model, title=_title_from(text)
+        )
         log.info(
             "chat.session.created",
             uid=uid,
@@ -252,7 +258,6 @@ def build_app(
         )
         if primary:
             topics_store.set_primary(solilos_db_path, session_id, primary, uid)
-        await hermes.set_title(session_id, uid, _title_from(text))
         return session_id
 
     def topic_turn_text(
