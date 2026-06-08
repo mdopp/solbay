@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib.metadata import version
+
 from solilos_chat import marker, personalities, skills
 from solilos_chat.hermes import (
     _chat_body,
@@ -17,7 +19,10 @@ from solilos_chat.server import (
     _IMAGE_PROMPT,
     _images_from,
     _normalize,
+    _stream_phases,
     _title_from,
+    _trace_from_phases,
+    _version,
     build_app,
     is_admin,
     resolve_uid,
@@ -76,6 +81,7 @@ class _FakeHermes:
         self.titles = []
         self.deleted = []
         self.images = []
+        self.efforts = []
         self._events = events or []
         # store: list of {id, user_id, title, last_activity, messages}
         self._store = store or []
@@ -104,14 +110,16 @@ class _FakeHermes:
             }
         ]
 
-    async def chat(self, session_id, text, images=None):
+    async def chat(self, session_id, text, images=None, reasoning_effort="none"):
         self.turns.append((session_id, text))
         self.images.append(images or [])
+        self.efforts.append(reasoning_effort)
         return f"echo: {text}"
 
-    async def chat_stream(self, session_id, text, images=None):
+    async def chat_stream(self, session_id, text, images=None, reasoning_effort="none"):
         self.turns.append((session_id, text))
         self.images.append(images or [])
+        self.efforts.append(reasoning_effort)
         for event in self._events:
             yield event
 
@@ -224,6 +232,77 @@ def test_title_from_first_message():
     assert _title_from("") == ""
 
 
+# --- Version badge (#223) --------------------------------------------------
+
+
+def test_version_prefers_env(monkeypatch):
+    # The injected release version (SOLILOS_VERSION, set at image build from the
+    # git tag/ref) wins over the never-bumped package version.
+    monkeypatch.setenv("SOLILOS_VERSION", "0.3.0")
+    assert _version() == "0.3.0"
+
+
+def test_version_env_blank_falls_back_to_package(monkeypatch):
+    # A blank env (local/dev build) falls through to the package metadata, so
+    # the badge still shows something rather than going empty.
+    monkeypatch.setenv("SOLILOS_VERSION", "   ")
+    assert _version() == version("solilos-chat")
+
+
+def test_version_no_env_uses_package(monkeypatch):
+    monkeypatch.delenv("SOLILOS_VERSION", raising=False)
+    assert _version() == version("solilos-chat")
+
+
+# --- Latency trace (#225) --------------------------------------------------
+
+
+def test_trace_from_phases_computes_pct_and_drops_zero():
+    trace = _trace_from_phases(
+        [("Prefill (TTFT)", 200.0), ("Answer", 800.0), ("noop", 0.0)],
+        1000.0,
+    )
+    assert trace["total_seconds"] == 1.0
+    assert trace["phases"] == [
+        {"label": "Prefill (TTFT)", "seconds": 0.2, "pct": 20.0},
+        {"label": "Answer", "seconds": 0.8, "pct": 80.0},
+    ]
+
+
+def test_trace_from_phases_empty_total_is_safe():
+    # Total 0 must not divide-by-zero; an empty phase list yields no rows.
+    assert _trace_from_phases([], 0.0) == {"total_seconds": 0.0, "phases": []}
+
+
+def test_stream_phases_with_reasoning_split():
+    # start=0, first token=100, </thinking>=600, end=1000, 0 tool ms.
+    phases = _stream_phases(0.0, 100.0, 600.0, 1000.0, 0.0)
+    assert phases == [
+        ("Prefill (TTFT)", 100.0),
+        ("Reasoning", 500.0),
+        ("Answer", 400.0),
+    ]
+
+
+def test_stream_phases_no_reasoning_just_prefill_and_answer():
+    phases = _stream_phases(0.0, 100.0, None, 1000.0, 0.0)
+    assert phases == [("Prefill (TTFT)", 100.0), ("Answer", 900.0)]
+
+
+def test_stream_phases_includes_tool_round_trip():
+    phases = _stream_phases(0.0, 100.0, None, 1000.0, 250.0)
+    assert ("Tool round-trip", 250.0) in phases
+
+
+def test_stream_phases_no_tokens_yields_only_tool_or_empty():
+    # A turn that streamed no assistant tokens (tool-only) keeps just the tool
+    # span; a totally empty turn yields nothing.
+    assert _stream_phases(0.0, None, None, 1000.0, 300.0) == [
+        ("Tool round-trip", 300.0)
+    ]
+    assert _stream_phases(0.0, None, None, 1000.0, 0.0) == []
+
+
 def test_normalize_assistant_delta():
     assert _normalize({"type": "assistant.delta", "data": {"delta": "hi"}}) == (
         "delta",
@@ -267,8 +346,9 @@ def test_maybe_json():
 
 
 def test_chat_body_text_only_is_plain_string():
-    assert _chat_body("hi", None) == {"input": "hi"}
-    assert _chat_body("hi", []) == {"input": "hi"}
+    # Default fast turn: reasoning_effort "none", no thinking surfaced (#222).
+    assert _chat_body("hi", None) == {"input": "hi", "reasoning_effort": "none"}
+    assert _chat_body("hi", []) == {"input": "hi", "reasoning_effort": "none"}
 
 
 def test_chat_body_images_become_content_parts():
@@ -282,9 +362,23 @@ def test_chat_body_images_become_content_parts():
                 "type": "image_url",
                 "image_url": {"url": "data:image/png;base64,AAAA"},
             },
-        ]
+        ],
+        "reasoning_effort": "none",
     }
     assert "images" not in body
+
+
+def test_chat_body_reasoning_surfaces_thinking_when_on():
+    # A reasoning turn asks Hermes to surface the block (#224) so the UI can
+    # render it — the live config has show_reasoning off, so without this the
+    # thinking would never reach the client.
+    assert _chat_body("explain", None, "high") == {
+        "input": "explain",
+        "reasoning_effort": "high",
+        "show_reasoning": True,
+    }
+    # Fast turn carries no show_reasoning and no thinking block.
+    assert "show_reasoning" not in _chat_body("hi", None, "none")
 
 
 def test_images_from_keeps_data_url_prefix_and_caps():
@@ -341,6 +435,54 @@ async def test_chat_image_only_uses_default_prompt(aiohttp_client, tmp_path):
     assert resp.status == 200
     assert fake.turns == [("sess-1", _IMAGE_PROMPT)]
     assert fake.images == [["QQ"]]
+
+
+async def test_chat_defaults_to_fast_reasoning(aiohttp_client, tmp_path):
+    fake = _FakeHermes()
+    app = build_app(
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
+    )
+    client = await aiohttp_client(app)
+    resp = await client.post("/api/chat", json={"input": "welche Lichter sind an"})
+    assert resp.status == 200
+    assert fake.efforts == ["none"]
+
+
+async def test_chat_selector_overrides_to_thorough(aiohttp_client, tmp_path):
+    fake = _FakeHermes()
+    app = build_app(
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
+    )
+    client = await aiohttp_client(app)
+    # The per-conversation selector (#224) wins over the fast default.
+    resp = await client.post(
+        "/api/chat", json={"input": "welche Lichter sind an", "reasoning": "high"}
+    )
+    assert resp.status == 200
+    assert fake.efforts == ["high"]
+
+
+async def test_chat_admin_escalates_reasoning(aiohttp_client, tmp_path):
+    fake = _FakeHermes()
+    app = build_app(
+        hermes=fake,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        attachments_dir=str(tmp_path),
+    )
+    client = await aiohttp_client(app)
+    # Admin/diagnose context auto-escalates (#222) when no selector is sent.
+    resp = await client.post(
+        "/api/chat", json={"input": "status?"}, headers={"Remote-Groups": "admins"}
+    )
+    assert resp.status == 200
+    assert fake.efforts == ["high"]
 
 
 async def test_chat_no_text_no_images_rejected(aiohttp_client):
@@ -1343,7 +1485,9 @@ async def test_cancel_interrupts_active_stream(aiohttp_client):
     import asyncio
 
     class _SlowHermes(_FakeHermes):
-        async def chat_stream(self, session_id, text, images=None):
+        async def chat_stream(
+            self, session_id, text, images=None, reasoning_effort="none"
+        ):
             self.turns.append((session_id, text))
             while True:
                 yield {"type": "assistant.delta", "data": {"delta": "x"}}

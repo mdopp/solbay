@@ -47,6 +47,7 @@ jobs:
             description: "Solilos schema-init sidecar — runs alembic upgrade head against the SolBay pod's local SQLite (solilos.db) on every pod start. Idempotent."
           - image: solilos-chat
             context: hermes-chat
+            inject_version: true
             description: "Solilos chat — stateless aiohttp proxy serving a static chat page over Hermes' native session API. Reads the Authelia Remote-User header for SSO; holds API_SERVER_KEY server-side. Replaces the fragile in-process hermes-webui."
     steps:
       - name: Checkout
@@ -99,7 +100,9 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.context }}/Dockerfile
-          build-args: ${{ matrix.build_args }}
+          build-args: |
+            ${{ matrix.build_args }}
+            ${{ matrix.inject_version && format('SOLILOS_VERSION={0}', steps.meta.outputs.version) || '' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

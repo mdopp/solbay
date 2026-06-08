@@ -55,7 +55,8 @@ async def test_create_session_then_chat_round_trip(monkeypatch):
         "title": marker.marker_for("michael"),
     }
     assert calls[1][:2] == ("POST", "/api/sessions/sess-1/chat")
-    assert calls[1][2] == {"input": "ping"}
+    # Default voice turn is FAST: reasoning_effort "none", no thinking surfaced.
+    assert calls[1][2] == {"input": "ping", "reasoning_effort": "none"}
 
 
 async def test_bearer_token_sent(monkeypatch):
@@ -254,6 +255,53 @@ async def test_no_fast_model_single_session_passthrough(monkeypatch):
     creates = [b for p, b in record if p == "/api/sessions"]
     assert creates == [{"user_id": "michael", "title": marker.marker_for("michael")}]
     assert client._sessions == {"michael": "only"}
+
+
+async def test_default_turn_sends_fast_reasoning(monkeypatch):
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        if request.url.path == "/api/sessions":
+            return httpx.Response(200, json={"id": "s"})
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": {"content": "ok"}})
+
+    _install_transport(monkeypatch, handler)
+    client = HermesClient("http://hermes:8642", "")
+    await client.converse(
+        text="welche Lichter sind an", uid="u", endpoint="e", trace_id="t"
+    )
+    assert bodies == [{"input": "welche Lichter sind an", "reasoning_effort": "none"}]
+
+
+async def test_explicit_cue_escalates_reasoning(monkeypatch):
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        if request.url.path == "/api/sessions":
+            return httpx.Response(200, json={"id": "s"})
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": {"content": "ok"}})
+
+    _install_transport(monkeypatch, handler)
+    client = HermesClient("http://hermes:8642", "")
+    await client.converse(
+        text="Denk mal scharf nach: warum tropft der Wasserhahn",
+        uid="u",
+        endpoint="e",
+        trace_id="t",
+    )
+    # Cue escalates to thorough; voice never surfaces the reasoning block.
+    assert bodies == [
+        {
+            "input": "Denk mal scharf nach: warum tropft der Wasserhahn",
+            "reasoning_effort": "high",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
