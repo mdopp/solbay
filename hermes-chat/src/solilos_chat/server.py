@@ -33,7 +33,19 @@ _MAX_IMAGES = 4
 
 
 def _version() -> str:
-    """The chat package version, for the sidebar footer. '' if unavailable."""
+    """The Solilos release version, for the sidebar footer. '' if unavailable.
+
+    Prefers the `SOLILOS_VERSION` env injected at image build (the release
+    git tag/ref, see build-images.yml) — the package version in pyproject.toml
+    is never bumped (releases are git tags, no release-please), so it would
+    always read "0.1.0". Falls back to the package metadata for local/dev
+    builds where the env is unset, so the badge still shows something.
+    """
+    import os
+
+    env = os.environ.get("SOLILOS_VERSION", "").strip()
+    if env:
+        return env
     try:
         from importlib.metadata import version
 
