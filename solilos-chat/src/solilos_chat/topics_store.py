@@ -1,0 +1,160 @@
+"""SQLite access to the topics registry and chat<->topic assignments.
+
+Reads the `topics` table (registry, migration 0004) and reads/writes
+`session_topics` (chat<->topic assignment, migration 0005) in solilos.db. The
+proxy is otherwise stateless; this is the one store it owns for the Topics
+feature (the assignment + display surfaces, #241).
+
+Sync sqlite3, like the gatekeeper's `rooms_store`: each op is millisecond-cheap.
+If solilos.db or a table is missing (the schema-init sidecar hasn't migrated
+yet), reads degrade to empty rather than erroring — the picker just shows no
+topics until the migration lands.
+
+Scoping is per-resident (D3): assignments carry the assigning `owner_uid` and
+every read/write is filtered by it, so a resident never sees or mutates another
+resident's chat<->topic rows.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+
+def _connect(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def list_topics(db_path: str, owner_uid: str) -> list[dict[str, Any]]:
+    """Topics the resident may assign: their own plus shared/admin/system ones.
+
+    System topics (null owner_uid) and shared/admin-scoped topics are visible to
+    every resident; resident-scoped topics only to their owner. Archived topics
+    are omitted. Empty when the DB/table is missing.
+    """
+    if not Path(db_path).exists():
+        return []
+    try:
+        with _connect(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT slug, display_name, parent, scope, color
+                  FROM topics
+                 WHERE archived = 0
+                   AND (owner_uid = ? OR owner_uid IS NULL OR scope != 'resident')
+                 ORDER BY display_name
+                """,
+                (owner_uid,),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [dict(r) for r in rows]
+
+
+def get_session_topics(db_path: str, session_id: str, owner_uid: str) -> dict[str, Any]:
+    """The resident's topics for a chat: `{primary: slug|None, secondary: [..]}`.
+
+    Empty (`{"primary": None, "secondary": []}`) when the DB/table is missing or
+    the chat has no assignment.
+    """
+    empty: dict[str, Any] = {"primary": None, "secondary": []}
+    if not Path(db_path).exists():
+        return empty
+    try:
+        with _connect(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT topic_slug, role
+                  FROM session_topics
+                 WHERE session_id = ? AND owner_uid = ?
+                """,
+                (session_id, owner_uid),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return empty
+    primary: str | None = None
+    secondary: list[str] = []
+    for r in rows:
+        if r["role"] == "primary":
+            primary = r["topic_slug"]
+        else:
+            secondary.append(r["topic_slug"])
+    secondary.sort()
+    return {"primary": primary, "secondary": secondary}
+
+
+def primary_topics_for(
+    db_path: str, session_ids: list[str], owner_uid: str
+) -> dict[str, str]:
+    """`{session_id: primary_slug}` for the resident's chats (chip rendering).
+
+    Only sessions with a primary assignment appear. Empty when DB/table missing.
+    """
+    if not session_ids or not Path(db_path).exists():
+        return {}
+    placeholders = ",".join("?" for _ in session_ids)
+    try:
+        with _connect(db_path) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT session_id, topic_slug
+                  FROM session_topics
+                 WHERE role = 'primary' AND owner_uid = ?
+                   AND session_id IN ({placeholders})
+                """,
+                (owner_uid, *session_ids),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {r["session_id"]: r["topic_slug"] for r in rows}
+
+
+def set_primary(db_path: str, session_id: str, slug: str, owner_uid: str) -> None:
+    """Set (replace) the chat's single primary topic for this resident (D1)."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM session_topics "
+            "WHERE session_id = ? AND owner_uid = ? AND role = 'primary'",
+            (session_id, owner_uid),
+        )
+        # A slug demoted from secondary->primary would collide on the PK; clear
+        # any existing row for this (session, slug) first.
+        conn.execute(
+            "DELETE FROM session_topics "
+            "WHERE session_id = ? AND owner_uid = ? AND topic_slug = ?",
+            (session_id, owner_uid, slug),
+        )
+        conn.execute(
+            "INSERT INTO session_topics (session_id, topic_slug, role, owner_uid) "
+            "VALUES (?, ?, 'primary', ?)",
+            (session_id, slug, owner_uid),
+        )
+        conn.commit()
+
+
+def add_secondary(db_path: str, session_id: str, slug: str, owner_uid: str) -> None:
+    """Add a secondary tag to the chat (idempotent; no-op if already present)."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO session_topics (session_id, topic_slug, role, owner_uid)
+            VALUES (?, ?, 'secondary', ?)
+            ON CONFLICT(session_id, topic_slug) DO NOTHING
+            """,
+            (session_id, slug, owner_uid),
+        )
+        conn.commit()
+
+
+def remove_topic(db_path: str, session_id: str, slug: str, owner_uid: str) -> None:
+    """Remove a topic (primary or secondary) from the chat for this resident."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM session_topics "
+            "WHERE session_id = ? AND owner_uid = ? AND topic_slug = ?",
+            (session_id, owner_uid, slug),
+        )
+        conn.commit()

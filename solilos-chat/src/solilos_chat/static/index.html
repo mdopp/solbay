@@ -508,6 +508,21 @@
       font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase;
       border-radius: 20px; padding: 2px 9px; font-weight: 600; flex: 0 0 auto;
     }
+    /* Topic chip on a session row (#241): a small colored label for the chat's
+       primary topic, color from topics.color. */
+    .topic-chip {
+      display: inline-block; margin-top: 3px; font-size: 10.5px; line-height: 1.4;
+      padding: 0 7px; border-radius: 10px; max-width: 100%; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+      color: var(--accent); background: var(--bubble-sol); border: 1px solid var(--line);
+    }
+    /* Secondary-tag chips in the header topic picker. */
+    .topic-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .topic-tags .topic-chip { cursor: default; margin-top: 0; }
+    .topic-tags .topic-chip button {
+      border: 0; background: transparent; color: inherit; cursor: pointer;
+      font: inherit; padding: 0 0 0 4px; line-height: 1;
+    }
     .pill.on { color: var(--ok); background: var(--ok-soft); }
     .pill.off { color: var(--muted); background: var(--bubble-sol); }
     .tools-search {
@@ -726,6 +741,11 @@
           <label for="personality">Persona</label>
           <select id="personality" aria-label="Personality for new sessions"></select>
         </span>
+        <span class="persona" id="topic-control" hidden>
+          <label for="topic-primary">Thema</label>
+          <select id="topic-primary" aria-label="Primary topic for this chat" title="Primäres Thema dieses Chats"></select>
+          <span class="topic-tags" id="topic-tags"></span>
+        </span>
         <button class="icon-btn embed-settings" id="embed-settings" type="button" title="Settings" aria-label="Settings"><svg class="ic"><use href="#i-settings"></use></svg></button>
       </header>
       <div id="log" aria-live="polite"></div>
@@ -918,6 +938,82 @@
       var adminBadge = document.getElementById("admin-badge");
       var sessionId = null;
       var slash = { refresh: function () {}, handleKey: function () { return false; } };
+
+      // ---- Topics (#241): primary topic picker + secondary tags in the header,
+      // primary-topic chip per chat in the list. Available topics come from the
+      // registry (GET /api/topics); per-session assignment via
+      // GET/POST /api/sessions/{id}/topics.
+      var topicCtrl = document.getElementById("topic-control");
+      var topicSel = document.getElementById("topic-primary");
+      var topicTags = document.getElementById("topic-tags");
+      var topicsList = [];
+      var topicsBySlug = {};
+
+      function loadTopics() {
+        return fetch("/api/topics")
+          .then(function (r) { return r.ok ? r.json() : { topics: [] }; })
+          .then(function (j) {
+            topicsList = (j && j.topics) || [];
+            topicsBySlug = {};
+            topicsList.forEach(function (t) { topicsBySlug[t.slug] = t; });
+            topicSel.textContent = "";
+            var none = document.createElement("option");
+            none.value = ""; none.textContent = "—";
+            topicSel.appendChild(none);
+            topicsList.forEach(function (t) {
+              var opt = document.createElement("option");
+              opt.value = t.slug; opt.textContent = t.display_name || t.slug;
+              topicSel.appendChild(opt);
+            });
+          })
+          .catch(function () {});
+      }
+
+      function renderTopicTags(secondary) {
+        topicTags.textContent = "";
+        (secondary || []).forEach(function (slug) {
+          var meta = topicsBySlug[slug];
+          var chip = document.createElement("span");
+          chip.className = "topic-chip";
+          chip.textContent = (meta && meta.display_name) || slug;
+          if (meta && meta.color) { chip.style.color = meta.color; chip.style.borderColor = meta.color; }
+          var x = document.createElement("button");
+          x.type = "button"; x.textContent = "×"; x.title = "Tag entfernen";
+          x.addEventListener("click", function () { setSessionTopic("remove", slug); });
+          chip.appendChild(x);
+          topicTags.appendChild(chip);
+        });
+      }
+
+      function syncSessionTopics() {
+        if (!sessionId) { topicCtrl.hidden = true; return; }
+        topicCtrl.hidden = false;
+        fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/topics")
+          .then(function (r) { return r.ok ? r.json() : { primary: null, secondary: [] }; })
+          .then(function (j) {
+            topicSel.value = (j && j.primary) || "";
+            renderTopicTags((j && j.secondary) || []);
+          })
+          .catch(function () {});
+      }
+
+      function setSessionTopic(action, slug) {
+        if (!sessionId || !slug) return;
+        fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/topics", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: action, slug: slug })
+        })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) {
+            if (j) { topicSel.value = j.primary || ""; renderTopicTags(j.secondary || []); }
+            loadSessions();
+          })
+          .catch(function () {});
+      }
+
+      topicSel.addEventListener("change", function () {
+        if (topicSel.value) { setSessionTopic("primary", topicSel.value); }
+      });
 
       function currentPersonality() { return personalitySel.value || "sol"; }
 
@@ -1200,7 +1296,7 @@
           function handle(event, data) {
             var d = {};
             try { d = JSON.parse(data); } catch (e) {}
-            if (event === "session") { if (d.session_id) sessionId = d.session_id; }
+            if (event === "session") { if (d.session_id) { sessionId = d.session_id; syncSessionTopics(); } }
             else if (event === "delta") { if (d.text) msg.append(d.text); }
             else if (event === "reasoning") { if (d.text) msg.setReasoning(d.text); }
             else if (event === "tool") {
@@ -1649,6 +1745,14 @@
           title.className = "title";
           title.textContent = s.title || s.preview || "New chat";
           body.appendChild(title);
+          if (s.primary_topic) {
+            var tc = document.createElement("span");
+            tc.className = "topic-chip";
+            var meta = topicsBySlug[s.primary_topic];
+            tc.textContent = (meta && meta.display_name) || s.primary_topic;
+            if (meta && meta.color) { tc.style.color = meta.color; tc.style.borderColor = meta.color; }
+            body.appendChild(tc);
+          }
           var when = fmtWhen(s.last_activity);
           if (when) { var w = document.createElement("div"); w.className = "when"; w.textContent = when; body.appendChild(w); }
           row.appendChild(body);
@@ -1716,6 +1820,7 @@
             });
             scrollDown(true);
             loadSessions();
+            syncSessionTopics();
             input.focus();
           })
           .catch(function () { addText("system", "Could not open that chat."); });
@@ -1726,6 +1831,7 @@
         sessionId = null;
         clearLog();
         loadSessions();
+        syncSessionTopics();
         closeRail();
         showView("chat");
         input.focus();
@@ -2200,7 +2306,8 @@
 
       loadPersonalities();
       loadWhoami();
-      loadSessions();
+      loadTopics().then(loadSessions);
+      syncSessionTopics();
     })();
   </script>
 </body>

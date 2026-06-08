@@ -16,7 +16,7 @@ from typing import Any
 import aiohttp
 from aiohttp import web
 
-from solilos_chat import compaction, personalities, reasoning, skills
+from solilos_chat import compaction, personalities, reasoning, skills, topics_store
 from solilos_chat.attachments import AttachmentStore, attach_to_messages
 from solilos_chat.context import STATIC_DEFAULT, ContextWindow
 from solilos_chat.hermes import HermesClient, HermesError
@@ -109,6 +109,7 @@ def build_app(
     frame_ancestors: str = "'self'",
     fast_model: str = "",
     thorough_model: str = "",
+    solilos_db_path: str = "/var/lib/solilos/solilos.db",
 ) -> web.Application:
     if isinstance(context_window, int):
         context_window = ContextWindow.static(context_window)
@@ -386,6 +387,12 @@ def build_app(
             return web.json_response(
                 {"ok": False, "reason": "hermes_unavailable"}, status=502
             )
+        # Annotate each session with its primary topic so the list can render a
+        # chip (#241). Per-resident scope (D3): only the caller's assignments.
+        ids = [str(s.get("id")) for s in sessions if s.get("id")]
+        primaries = topics_store.primary_topics_for(solilos_db_path, ids, uid)
+        for s in sessions:
+            s["primary_topic"] = primaries.get(str(s.get("id")))
         return web.json_response({"ok": True, "sessions": sessions})
 
     async def create_session(request: web.Request) -> web.Response:
@@ -481,6 +488,52 @@ def build_app(
             session_id=session_id,
         )
         return web.json_response({"ok": True})
+
+    async def list_topics(request: web.Request) -> web.Response:
+        uid = resolve_uid(request, remote_user_header, default_uid)
+        return web.json_response(
+            {"ok": True, "topics": topics_store.list_topics(solilos_db_path, uid)}
+        )
+
+    async def get_session_topics(request: web.Request) -> web.Response:
+        uid = resolve_uid(request, remote_user_header, default_uid)
+        session_id = request.match_info["session_id"]
+        assigned = topics_store.get_session_topics(solilos_db_path, session_id, uid)
+        return web.json_response({"ok": True, **assigned})
+
+    async def set_session_topics(request: web.Request) -> web.Response:
+        uid = resolve_uid(request, remote_user_header, default_uid)
+        session_id = request.match_info["session_id"]
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — any malformed JSON
+            return web.json_response(
+                {"ok": False, "reason": "invalid_json"}, status=400
+            )
+        action = body.get("action")
+        slug = body.get("slug")
+        if not isinstance(slug, str) or not slug.strip():
+            return web.json_response({"ok": False, "reason": "empty_slug"}, status=400)
+        slug = slug.strip()
+        if action == "primary":
+            topics_store.set_primary(solilos_db_path, session_id, slug, uid)
+        elif action == "add_secondary":
+            topics_store.add_secondary(solilos_db_path, session_id, slug, uid)
+        elif action == "remove":
+            topics_store.remove_topic(solilos_db_path, session_id, slug, uid)
+        else:
+            return web.json_response(
+                {"ok": False, "reason": "invalid_action"}, status=400
+            )
+        log.info(
+            "chat.session.topic",
+            uid=uid,
+            session_id=session_id,
+            action=action,
+            slug=slug,
+        )
+        assigned = topics_store.get_session_topics(solilos_db_path, session_id, uid)
+        return web.json_response({"ok": True, **assigned})
 
     async def chat(request: web.Request) -> web.Response:
         uid = resolve_uid(request, remote_user_header, default_uid)
@@ -696,6 +749,9 @@ def build_app(
     app.router.add_post("/api/sessions", create_session)
     app.router.add_get("/api/sessions/{session_id}", get_session)
     app.router.add_delete("/api/sessions/{session_id}", delete_session)
+    app.router.add_get("/api/topics", list_topics)
+    app.router.add_get("/api/sessions/{session_id}/topics", get_session_topics)
+    app.router.add_post("/api/sessions/{session_id}/topics", set_session_topics)
     app.router.add_post("/api/chat", chat)
     app.router.add_post("/api/chat/stream", chat_stream)
     app.router.add_post("/api/chat/cancel", cancel_chat)
@@ -1004,6 +1060,7 @@ async def serve(
     frame_ancestors: str = "'self'",
     fast_model: str = "",
     thorough_model: str = "",
+    solilos_db_path: str = "/var/lib/solilos/solilos.db",
 ) -> None:
     if isinstance(context_window, int):
         context_window = ContextWindow.static(context_window)
@@ -1024,6 +1081,7 @@ async def serve(
         frame_ancestors=frame_ancestors,
         fast_model=fast_model,
         thorough_model=thorough_model,
+        solilos_db_path=solilos_db_path,
     )
     runner = web.AppRunner(app)
     await runner.setup()
