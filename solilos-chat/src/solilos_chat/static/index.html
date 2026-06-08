@@ -755,21 +755,14 @@
       <header class="chat-header">
         <span class="chat-title" id="chat-title">Neuer Chat</span>
         <span class="incognito-badge" id="incognito-badge" hidden title="Temporärer Chat: nichts wird gespeichert, wird beim Schließen gelöscht"><svg class="ic"><use href="#i-ghost"></use></svg> Temporär</span>
-        <span class="chat-head-grow"></span>
         <span class="chat-search-wrap">
           <input class="chat-search" id="chat-search" type="search" placeholder="In Chat suchen…" aria-label="In Chat suchen" autocomplete="off" />
           <span class="chat-search-count" id="chat-search-count" hidden></span>
         </span>
-        <span class="persona" id="reasoning-control">
-          <label for="reasoning-mode">Thinking</label>
-          <select id="reasoning-mode" aria-label="Thinking mode for this chat" title="Aus: schnelle Antwort ohne Nachdenken. An: Sol denkt nach und zeigt die Gedanken.">
-            <option value="none">Aus</option>
-            <option value="high">An</option>
-          </select>
-        </span>
+        <span class="chat-head-grow"></span>
         <span class="persona" id="persona-control">
           <label for="personality">Persona</label>
-          <select id="personality" aria-label="Personality for new sessions"></select>
+          <select id="personality" aria-label="Persona and speed for new sessions" title="Persona × Geschwindigkeit: schnell antwortet sofort, Thinking lässt Sol nachdenken."></select>
         </span>
         <span class="persona" id="topic-control" hidden>
           <label for="topic-primary">Thema</label>
@@ -982,7 +975,6 @@
       var incognitoBadge = document.getElementById("incognito-badge");
       var backdrop = document.getElementById("backdrop");
       var personalitySel = document.getElementById("personality");
-      var reasoningSel = document.getElementById("reasoning-mode");
       var adminBadge = document.getElementById("admin-badge");
       var sessionId = null;
       // Topic chosen in the picker before the first message of a NEW chat
@@ -1009,7 +1001,6 @@
       // registry (GET /api/topics); per-session assignment via
       // GET/POST /api/sessions/{id}/topics.
       var topicCtrl = document.getElementById("topic-control");
-      var reasoningCtrl = document.getElementById("reasoning-control");
       var personaCtrl = document.getElementById("persona-control");
       var topicSel = document.getElementById("topic-primary");
       var topicTags = document.getElementById("topic-tags");
@@ -1145,23 +1136,22 @@
           .catch(function () { topicModalItems.textContent = "Konnte das Thema nicht laden."; });
       }
 
-      function currentPersonality() { return personalitySel.value || "sol"; }
-
-      // ---- Thinking selector (#224, "auswählbar") ----
-      // Per-conversation Thinking toggle that the backend (#222) honours ahead
-      // of its adaptive default: "none" (off, the default — no thinking
-      // generated, ~1.5-3s) vs "high" (on — the model reasons and the chat
-      // renders the thinking block). Persisted locally; sent with every turn as
-      // `reasoning`.
+      // ---- Persona × speed selector (#278) ----
+      // One dropdown crosses each persona with a speed: "fast" (reasoning none,
+      // ~1.5-3s) or "thinking" (reasoning high — the model reasons and the chat
+      // renders the thinking block). The option value packs both as
+      // `<persona-id>|<reasoning>`; the two halves still drive the unchanged
+      // payload.personality + payload.reasoning wiring. Both are persisted
+      // locally and applied to the next new chat.
       var REASONING_VALUES = { none: 1, low: 1, high: 1 };
-      (function () {
-        var saved = localStorage.getItem("sol.reasoning");
-        reasoningSel.value = REASONING_VALUES[saved] ? saved : "none";
-      })();
-      reasoningSel.addEventListener("change", function () {
-        localStorage.setItem("sol.reasoning", reasoningSel.value);
-      });
-      function currentReasoning() { return reasoningSel.value || "none"; }
+      function parsePersonaSpeed(v) {
+        var parts = (v || "sol|none").split("|");
+        var id = parts[0] || "sol";
+        var reasoning = REASONING_VALUES[parts[1]] ? parts[1] : "none";
+        return { id: id, reasoning: reasoning };
+      }
+      function currentPersonality() { return parsePersonaSpeed(personalitySel.value).id; }
+      function currentReasoning() { return parsePersonaSpeed(personalitySel.value).reasoning; }
 
       // ---- Thinking-mode display preference (#185) ----
       // Reasoning models (gemma4 etc.) emit a <thinking>…</thinking> (or
@@ -1872,11 +1862,18 @@
           ? !!(activeS && activeS.primary_topic === HOUSEHOLD_TOPIC)
           : pendingTopic === HOUSEHOLD_TOPIC;
         householdBtn.classList.toggle("active", active);
-        // The "Zuhause" chat has fixed mode + persona + topic (Thinking off,
-        // Sol, Household), so those selectors offer no choice — hide them (#274).
-        reasoningCtrl.hidden = active;
+        // The "Zuhause" chat has a fixed persona × speed + topic (Sol fast,
+        // Household), so those selectors offer no choice — hide them (#274).
         personaCtrl.hidden = active;
-        if (active) topicCtrl.hidden = true;
+        if (active) {
+          topicCtrl.hidden = true;
+          // Name the household chat "Zuhause" rather than the generic
+          // new-chat placeholder, including the pre-first-turn state (#281).
+          var ct = document.getElementById("chat-title");
+          if (ct && !(activeS && (activeS.title || activeS.preview))) {
+            ct.textContent = (topicsBySlug[HOUSEHOLD_TOPIC] && topicsBySlug[HOUSEHOLD_TOPIC].display_name) || "Zuhause";
+          }
+        }
       }
 
       function renderSessions(list) {
@@ -1884,6 +1881,8 @@
         var activeS = (list || []).find(function (s) { return s.id === sessionId; });
         var ct = document.getElementById("chat-title");
         if (ct) { ct.textContent = (activeS && (activeS.title || activeS.preview)) || "Neuer Chat"; }
+        // syncPinnedActive overrides the placeholder with "Zuhause" when this is
+        // the household chat (#281); it runs after the default is set above.
         syncPinnedActive(activeS);
         sessionsEl.textContent = "";
         if (!list.length) {
@@ -2052,26 +2051,38 @@
       incognitoBtn.addEventListener("click", newIncognito);
       householdBtn.addEventListener("click", startHouseholdChat);
 
-      // ---- Personality ----
+      // ---- Persona × speed (#278) ----
+      // Each persona from /api/personalities is crossed with the two speeds, so
+      // a single header dropdown carries e.g. "Sol (schnell)" / "Sol (Thinking)".
+      var PERSONA_SPEEDS = [
+        { suffix: "schnell", reasoning: "none" },
+        { suffix: "Thinking", reasoning: "high" },
+      ];
       function loadPersonalities() {
         return fetch("/api/personalities")
           .then(function (r) { return r.ok ? r.json() : { personalities: [] }; })
           .then(function (j) {
             var list = (j && j.personalities) || [];
-            var saved = localStorage.getItem("sol.personality") || "sol";
+            var saved = localStorage.getItem("sol.persona-speed")
+              || (localStorage.getItem("sol.personality") || "sol") + "|"
+                 + (REASONING_VALUES[localStorage.getItem("sol.reasoning")] ? localStorage.getItem("sol.reasoning") : "none");
             personalitySel.textContent = "";
             list.forEach(function (p) {
-              var opt = document.createElement("option");
-              opt.value = p.id; opt.textContent = p.label; opt.title = p.description;
-              if (p.id === saved) opt.selected = true;
-              personalitySel.appendChild(opt);
+              PERSONA_SPEEDS.forEach(function (sp) {
+                var opt = document.createElement("option");
+                opt.value = p.id + "|" + sp.reasoning;
+                opt.textContent = p.label + " (" + sp.suffix + ")";
+                opt.title = p.description;
+                if (opt.value === saved) opt.selected = true;
+                personalitySel.appendChild(opt);
+              });
             });
-            personalitySel.title = "Applies to the next new chat";
+            personalitySel.title = "Persona × Geschwindigkeit — gilt für den nächsten neuen Chat";
           })
           .catch(function () {});
       }
       personalitySel.addEventListener("change", function () {
-        localStorage.setItem("sol.personality", personalitySel.value);
+        localStorage.setItem("sol.persona-speed", personalitySel.value);
       });
 
       // ---- Identity (footer + admin affordances) ----
