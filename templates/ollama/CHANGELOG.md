@@ -1,3 +1,8 @@
+## v5
+
+- **Anti-eviction (#268)**: `OLLAMA_KEEP_ALIVE` default raised from `60m` to `24h` — an overnight gap no longer evicts the chat model, so the cached prefix and loaded weights survive across the morning's first turn (the 60m cap existed only to let a co-resident idle model release VRAM; with the new `OLLAMA_MAX_LOADED_MODELS=1` there is no second chat model to co-reside, so the cap is unnecessary).
+- **Anti-eviction (#268)**: new `OLLAMA_MAX_LOADED_MODELS` variable (default `1`). Keeps exactly one chat model resident so switching gemma4:12b ↔ gemma4:e2b can never co-reside and evict the cached-prefix model under the tight 128k VRAM footprint — the chat↔chat eviction race that defeated KV-prefix reuse across turns. The dedicated embed model (`OLLAMA_EMBED_MODEL`) runs in its own llama-server runner and is not counted against this chat-model slot, so embeddings still serve in parallel. Wired on both the `.kube` and GPU `.container` render paths.
+
 ## v4
 
 - **Latency bundle**: `OLLAMA_CONTEXT_LENGTH` default raised from `32768` back to `131072` (128k). The base system prompt grew to ~25k tokens, so at 32k only ~7k was left for the conversation — the prompt brushed/crossed the window every HA-control turn, forcing llama.cpp drop-middle truncation → KV-cache invalidation → a full re-prefill each turn (~20s) and shearing the tool block ('no tool call'). 128k gives ~103k conversation room so the cached prefix survives. Box-measured (#214): gemma4:12b @131072 ≈10.3 GB on a 16 GB GPU. VRAM caveat: gemma4:12b + gemma4:e2b co-resident @128k ≈14.6 GB of ~15.6 GB usable — tight; `OLLAMA_KEEP_ALIVE` governs pinning, and if it OOMs the fallback is keeping e2b resident with 12b at a smaller window / on demand.

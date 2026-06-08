@@ -533,6 +533,17 @@ def merge_config_yaml(servers: list[tuple[str, str, str]]) -> bool:
     rendered one. Returns True on write, False if config.yaml doesn't
     exist yet or the write failed (caller decides whether that's fatal).
 
+    The rewrite intentionally drops every prior entry and re-renders ONLY
+    the household servers (`servicebay-mcp` + `gatekeeper-mcp`). In
+    particular it strips admin-soul's `servicebay_admin` entry: that entry
+    is a ~6.3k-token near-duplicate of `servicebay-mcp` (same SB instance,
+    admin scope) that only the operator soul needs, and Hermes' mcp_servers
+    block is global to the one instance, so leaving it in the shared config
+    bloats the household chat's prefill for no benefit (#268). admin-soul's
+    own post-deploy re-splices `servicebay_admin` when IT is (re)deployed —
+    the operator-soul wiring stays intact; a household-stack redeploy just
+    keeps it out of the household-facing config.
+
     Read+write go through the hermes container (its user owns the file,
     mode 640 — `core` can't open it on the host)."""
     existing = read_config_via_container()

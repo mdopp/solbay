@@ -31,8 +31,13 @@
   },
   "OLLAMA_KEEP_ALIVE": {
     "type": "text",
-    "description": "How long Ollama keeps a model loaded in VRAM after its last request (Go duration, e.g. `60m`, `10m`; `-1` = forever, `0` = unload immediately). Stock default is `5m`, which evicts the chat model after a short pause → the next turn pays a cold model RELOAD (several seconds) on top of prefill. Default `60m`: a normal conversational pause never triggers a cold reload, so the cached prefix and the loaded weights survive. Deliberately NOT `-1`: with adaptive routing both gemma4:12b and gemma4:e2b can be co-resident @128k (≈14.6 GB of ~15.6 GB usable — tight), and pinning both forever risks an OOM/eviction thrash; 60m lets a genuinely idle model release VRAM while still covering any realistic pause. If co-residency OOMs, lower this OR drop the thorough model's window so the fast model (gemma4:e2b) stays comfortably resident.",
-    "default": "60m"
+    "description": "How long Ollama keeps a model loaded in VRAM after its last request (Go duration, e.g. `24h`, `60m`; `-1` = forever, `0` = unload immediately). Stock default is `5m`, which evicts the chat model after a short pause → the next turn pays a cold model RELOAD (several seconds) on top of prefill. Default `24h`: a normal conversational pause — and an overnight gap — never triggers a cold reload, so the cached prefix and the loaded weights survive (#268 anti-eviction). With `OLLAMA_MAX_LOADED_MODELS=1` only one chat model is ever resident, so the old co-residency VRAM-thrash concern that capped this at 60m no longer applies; 24h eliminates the overnight cold-start without risking OOM. The embed model runs in its own runner and is governed separately, not pinned by this.",
+    "default": "24h"
+  },
+  "OLLAMA_MAX_LOADED_MODELS": {
+    "type": "text",
+    "description": "Maximum number of models Ollama keeps loaded at once (per Ollama's `OLLAMA_MAX_LOADED_MODELS`; `0` = unlimited). Default `1`: keep exactly one chat model resident so a secondary chat model (e.g. switching gemma4:12b ↔ gemma4:e2b) can never co-reside and evict the cached-prefix model under the tight 128k VRAM footprint — the chat↔chat eviction race that defeated KV-prefix reuse across turns (#268). The dedicated embed model (`OLLAMA_EMBED_MODEL`, nomic-embed-text) runs in its OWN llama-server runner, so embeddings still serve in parallel and are not counted against this chat-model slot. Operators who accept the VRAM risk to keep two chat models warm can raise this, but the household default is one resident chat model + the separate embed runner.",
+    "default": "1"
   },
   "OLLAMA_FLASH_ATTENTION": {
     "type": "text",

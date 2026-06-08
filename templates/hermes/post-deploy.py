@@ -395,6 +395,9 @@ def write_config_yaml(
         #   - discord_admin: server administration — no household use
         #   - x_search: no social-search path
         #   - yuanbao, moa, computer_use: unused external integrations
+        #   - kanban: ~3.8k tokens of board/card tool defs no Solilos feature
+        #     uses (#268 TTFT trim). NOTE: cronjob stays ENABLED — it is
+        #     load-bearing for timers/alarms/reminders + the 3 system crons.
         "agent:\n"
         "  disabled_toolsets:\n"
         "    - browser\n"
@@ -407,6 +410,7 @@ def write_config_yaml(
         "    - yuanbao\n"
         "    - moa\n"
         "    - computer_use\n"
+        "    - kanban\n"
     )
     if custom_providers_block:
         content += "\n" + custom_providers_block
