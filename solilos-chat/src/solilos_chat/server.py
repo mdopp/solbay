@@ -542,6 +542,29 @@ def build_app(
             {"ok": True, "topics": topics_store.list_topics(solilos_db_path, uid)}
         )
 
+    async def create_topic(request: web.Request) -> web.Response:
+        # Create a resident-scoped topic from a confirmed suggestion (D4, #245).
+        # The topic-suggester skill POSTs here only after the resident says yes;
+        # the proxy never auto-creates. Idempotent on slug (see topics_store).
+        uid = resolve_uid(request, remote_user_header, default_uid)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — any malformed JSON
+            return web.json_response(
+                {"ok": False, "reason": "invalid_json"}, status=400
+            )
+        slug = str(body.get("slug") or "").strip().strip("/")
+        display_name = str(body.get("display_name") or "").strip()
+        if not slug or not display_name:
+            return web.json_response(
+                {"ok": False, "reason": "slug_and_display_name_required"}, status=400
+            )
+        color = body.get("color")
+        color = color.strip() if isinstance(color, str) and color.strip() else None
+        topics_store.create_topic(solilos_db_path, slug, display_name, uid, color)
+        log.info("chat.topic.create", uid=uid, slug=slug)
+        return web.json_response({"ok": True, "slug": slug})
+
     async def get_session_topics(request: web.Request) -> web.Response:
         uid = resolve_uid(request, remote_user_header, default_uid)
         session_id = request.match_info["session_id"]
@@ -818,6 +841,7 @@ def build_app(
     app.router.add_get("/api/sessions/{session_id}", get_session)
     app.router.add_delete("/api/sessions/{session_id}", delete_session)
     app.router.add_get("/api/topics", list_topics)
+    app.router.add_post("/api/topics", create_topic)
     app.router.add_get("/api/sessions/{session_id}/topics", get_session_topics)
     app.router.add_post("/api/sessions/{session_id}/topics", set_session_topics)
     app.router.add_get("/api/topics/{slug:.+}/items", topic_items)

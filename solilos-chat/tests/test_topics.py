@@ -139,6 +139,40 @@ def _seed_topic_defaults(db: str, slug: str, model, persona) -> None:
     conn.close()
 
 
+def test_create_topic_inserts_resident_scoped_row(tmp_path):
+    db = _db(tmp_path)
+    topics_store.create_topic(db, "projekt/dach", "Dach", "mdopp", "#abc123")
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT scope, owner_uid, display_name, color FROM topics WHERE slug = ?",
+        ("projekt/dach",),
+    ).fetchone()
+    conn.close()
+    assert row["scope"] == "resident"
+    assert row["owner_uid"] == "mdopp"
+    assert row["display_name"] == "Dach"
+    assert row["color"] == "#abc123"
+
+
+def test_create_topic_idempotent_does_not_clobber(tmp_path):
+    db = _db(tmp_path)
+    topics_store.create_topic(db, "projekt/dach", "Dach", "mdopp", "#abc123")
+    # A re-confirmed suggestion must not overwrite the existing display/color.
+    topics_store.create_topic(db, "projekt/dach", "Andere", "lena", None)
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT display_name, owner_uid, color FROM topics WHERE slug = ?",
+        ("projekt/dach",),
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0]["display_name"] == "Dach"
+    assert rows[0]["owner_uid"] == "mdopp"
+    assert rows[0]["color"] == "#abc123"
+
+
 def test_topic_defaults_reads_model_and_persona(tmp_path):
     db = _db(tmp_path)
     _seed_topic_defaults(db, "projekt/wintergarten", "gemma4:12b", "technical")
@@ -188,6 +222,60 @@ async def test_topics_endpoint_lists_registry(aiohttp_client, tmp_path):
     assert resp.status == 200
     slugs = {t["slug"] for t in body["topics"]}
     assert slugs == {"household", "projekt/wintergarten"}
+
+
+async def test_create_topic_endpoint_then_assign_primary(aiohttp_client, tmp_path):
+    # The confirmed-suggestion flow (#245): POST /api/topics creates the row,
+    # then the existing assignment endpoint makes it the session's primary.
+    db = _db(tmp_path)
+    app = build_app(
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        solilos_db_path=db,
+    )
+    client = await aiohttp_client(app)
+    hdr = {"Remote-User": "mdopp"}
+    resp = await client.post(
+        "/api/topics",
+        json={"slug": "projekt/dach", "display_name": "Dach", "color": "#abc123"},
+        headers=hdr,
+    )
+    body = await resp.json()
+    assert resp.status == 200
+    assert body == {"ok": True, "slug": "projekt/dach"}
+    # The new topic is now assignable and listed for the resident.
+    slugs = {t["slug"] for t in topics_store.list_topics(db, "mdopp")}
+    assert "projekt/dach" in slugs
+    resp = await client.post(
+        "/api/sessions/sess-9/topics",
+        json={"action": "primary", "slug": "projekt/dach"},
+        headers=hdr,
+    )
+    body = await resp.json()
+    assert resp.status == 200
+    assert body["primary"] == "projekt/dach"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"display_name": "Dach"}, {"slug": "x"}, {"slug": "", "display_name": ""}],
+)
+async def test_create_topic_endpoint_requires_slug_and_name(
+    aiohttp_client, tmp_path, payload
+):
+    db = _db(tmp_path)
+    app = build_app(
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        solilos_db_path=db,
+    )
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        "/api/topics", json=payload, headers={"Remote-User": "mdopp"}
+    )
+    assert resp.status == 400
 
 
 async def test_session_topics_set_and_read(aiohttp_client, tmp_path):

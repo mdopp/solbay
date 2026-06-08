@@ -172,6 +172,33 @@ def primary_topics_for(
     return {r["session_id"]: r["topic_slug"] for r in rows}
 
 
+def create_topic(
+    db_path: str,
+    slug: str,
+    display_name: str,
+    owner_uid: str,
+    color: str | None = None,
+) -> None:
+    """Create a resident-scoped topic row from a confirmed suggestion (D4, #245).
+
+    Idempotent: a slug that already exists is left untouched (a re-confirmed
+    suggestion, or a slug the resident created manually, must not clobber the
+    existing display_name/color). The topic suggester only ever creates the
+    resident's own topics, so scope is fixed to `resident` and owner_uid is the
+    confirming resident.
+    """
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO topics (slug, display_name, scope, owner_uid, color)
+            VALUES (?, ?, 'resident', ?, ?)
+            ON CONFLICT(slug) DO NOTHING
+            """,
+            (slug, display_name, owner_uid, color),
+        )
+        conn.commit()
+
+
 def set_primary(db_path: str, session_id: str, slug: str, owner_uid: str) -> None:
     """Set (replace) the chat's single primary topic for this resident (D1)."""
     with _connect(db_path) as conn:
