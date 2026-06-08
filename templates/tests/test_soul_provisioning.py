@@ -64,3 +64,12 @@ def test_idempotent_when_already_solilos(hermes, tmp_path):
     p.write_text(SHIPPED_SOUL, encoding="utf-8")
     assert hermes.write_soul_md(str(tmp_path)) is False
     assert p.read_text(encoding="utf-8") == SHIPPED_SOUL
+
+
+def test_soul_grounds_device_questions_in_live_ha_tools():
+    """#276: device/state questions must be answered from a live HA tool call,
+    not from memory or an earlier turn — the shipped soul carries that rule."""
+    soul = SHIPPED_SOUL.lower()
+    assert "ha_list_entities" in soul
+    assert "ha_get_state" in soul
+    assert "never in memory" in soul
