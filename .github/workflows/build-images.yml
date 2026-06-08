@@ -5,6 +5,9 @@ name: build-images
 # - On push to `main` and tags `v*`: builds + pushes to GHCR.
 # - On pull requests touching image sources: builds without pushing,
 #   so Dockerfiles are validated before merge.
+# - On workflow_dispatch: builds + pushes for the dispatched ref (branch or tag).
+#   Use `gh workflow run build-images.yml --ref vX.Y.Z` to manually publish
+#   a versioned release (replaces the delete+repush workaround for #256).
 
 on:
   push:
@@ -21,6 +24,12 @@ on:
       - 'database/**'
       - 'solilos-chat/**'
       - '.github/workflows/build-images.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (branch or tag, e.g. v0.3.0). Defaults to the ref selected when running the workflow.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -56,6 +65,7 @@ jobs:
           # Full history + tags so `git describe --tags` can compute the
           # SOLILOS_VERSION badge value (shallow checkout sees no tags).
           fetch-depth: 0
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Check Dockerfile exists
         id: check
