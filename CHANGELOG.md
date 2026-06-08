@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/mdopp/solbay/compare/v0.3.0...v0.4.0) (2026-06-08)
+
+
+### Features
+
+* **ci:** add workflow_dispatch to build-images + post-release trigger in release-please ([d02bbd2](https://github.com/mdopp/solbay/commit/d02bbd28f1f3ad82b9f2e2dfaac31266e42847cb))
+* **ci:** add workflow_dispatch to build-images + post-release trigger in release-please ([5fff7e8](https://github.com/mdopp/solbay/commit/5fff7e8d0063362d06feafd77fd50773316423b6)), closes [#256](https://github.com/mdopp/solbay/issues/256)
+
+
+### Bug Fixes
+
+* **chat:** surface tool-turn reply text instead of an empty bubble ([7b16abb](https://github.com/mdopp/solbay/commit/7b16abb1bfe98fef7393b1db26b3cd073c30fcf9))
+* **chat:** surface tool-turn reply text instead of an empty bubble ([380ea52](https://github.com/mdopp/solbay/commit/380ea52350e39b57daeda4c432200d4a00e4ef79)), closes [#258](https://github.com/mdopp/solbay/issues/258)
+
 ## [0.3.0](https://github.com/mdopp/solbay/compare/v0.2.0...v0.3.0) (2026-06-08)
 
 
