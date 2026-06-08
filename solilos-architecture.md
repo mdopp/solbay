@@ -53,6 +53,19 @@ See [`database/README.md`](database/README.md) for the migration runbook.
 A **Topic** is a cross-cutting, persistent label that groups a theme, project,
 or context across chats, notes, and future graph nodes.
 
+> **Pivot (#279) — user-facing tagging is mention-based, not a picker.**
+> The structured **Thema topic-picker** built in #241/#242 is *retired* as the
+> user-facing entry point: the topic list couldn't be user-edited and residents
+> don't want to curate a fixed list. It is replaced by inline **`#tag`**
+> (tags) and **`@person`** (persons) mentions typed directly in the chat. The
+> **system topic *binding* stays internal** — the Zuhause chat still binds
+> `gemma4:e2b` + the household soul, the `topics` table and its
+> `household` / `servicebay-admin` system rows remain as internal plumbing. Only
+> the *user-facing picker* is replaced. The split is explicit: **internal
+> binding** (D2, unchanged) vs **user-facing tagging** (mentions, below). The
+> picker-era design that follows is kept as history and marked
+> **superseded-by-#279** where it described the retired user surface.
+
 ### Built-in topics
 
 | Topic slug | Type | Model | Persona |
@@ -82,9 +95,9 @@ column null.
 
 *Binding is at session create.* Hermes binds model + system_prompt only when a
 session is born (the latency bundle — the model can't switch per-turn), so the
-topic default applies when a **new** chat is started under a topic: the picker
-selects a topic before the first message, or a pinned topic-chat (#237) starts
-pre-assigned. Changing the primary topic on an **existing** session updates the
+topic default applies when a **new** chat is started under a topic: a pinned
+topic-chat (#237) starts pre-assigned, or — in the picker era, superseded-by-#279
+— the picker selected a topic before the first message. Changing the primary topic on an **existing** session updates the
 chip/label and future `#topic/` ingestion tags but does **not** retroactively
 rebind the live session's model/persona — those hold until the next new chat.
 To run a topic under its model/persona, start a new chat in it.
@@ -122,13 +135,62 @@ eigenes Topic anlegen?" Manual creation is always available.
 | `role` | TEXT | `primary` / `secondary` |
 | `owner_uid` | TEXT | Resident who assigned it |
 
-### UI surfaces
+### UI surfaces (picker era — superseded-by-#279)
 
-- **Topic picker** in the chat header (alongside Schnell/Gründlich and
-  persona selector).
+These were the #241/#242 user surfaces. The **Topic picker** is *retired* by
+#279 (replaced by §"Mention-based tagging" below); the chip and pinned-chat
+surfaces survive in spirit (the tag-cloud and the Zuhause pin).
+
+- ~~**Topic picker** in the chat header (alongside Schnell/Gründlich and
+  persona selector).~~ — *retired (#279); replaced by inline `#tag`/`@person`
+  mentions + the tag-cloud.*
 - **Topic chip** in the session list (visual at-a-glance).
 - **Pinned topic-chats** in the rail — pre-assigned topic + model/persona
   (the #237 pattern extended to user topics).
+
+### Mention-based tagging (#279 — replaces the picker)
+
+The user-facing surface is now **inline mentions** typed in the chat, not a
+header picker:
+
+- **`#tag`** — a free-form tag. **`@person`** — a person reference. Both are
+  parsed out of the message text as the resident types.
+- **Autosuggest while typing.** Typing `#` or `@` opens an autosuggest popover
+  (the existing slash-menu pattern). `#` suggests from **already-known tags**
+  (tags used before); `@` suggests from **known persons**. *Decision: build
+  both `#tags` and `@persons` now* — `@person` suggestions are seeded from
+  residents / the uid registry plus a manual list. CardDAV/contacts enrichment
+  (#207, parked behind gbrain) extends the person suggestions *later* when it
+  lands; the mention surface ships without waiting for it.
+- **Tag-cloud.** The tags and persons used in a chat render as a cloud **to the
+  right of the chat on desktop** (when there's room) **or as a small line
+  directly above the message input** otherwise (responsive). Each tag/person in
+  the cloud **links back to the message where it was used** (jump-to-message
+  anchor).
+
+**Internal vs user-facing.** This replaces only the *user-facing picker*. The
+system topic **binding** (D2) is untouched: the Zuhause chat still binds
+`gemma4:e2b` + the household soul, and the `topics` table keeps its system rows
+(`household`, `servicebay-admin`) as internal plumbing the chat app binds
+against — residents simply never pick from a topic list anymore.
+
+**Storage (open — child units decide).** Where mentions are persisted per
+chat + per message is left open by this note: either a dedicated **`tags`
+table** (+ a per-message tag/person link), or **repurposing `session_topics`**
+with a per-message tag link alongside it. This is a design note; the builder of
+the child units picks the specifics.
+
+**Planned decomposition (#279 child units).** This note unblocks the build,
+which #279 splits into:
+
+1. **`#tag` parse + autosuggest + store** — parse `#` mentions, suggest from
+   known tags, persist them.
+2. **Tag-cloud UI + jump-to-message** — the responsive cloud (desktop-right /
+   mobile-line) with jump-to-message anchors.
+3. **`@person` parse + seed + autosuggest** — parse `@` mentions, seed persons
+   from residents / a manual list, suggest from known persons.
+4. **Retire the Thema picker** — remove the `#topic-control` picker + the
+   `FIXED_CONTEXT_TOPICS` gating (#274); the internal binding stays.
 
 ### Data → topic tagging (the heart of the system)
 
@@ -181,9 +243,12 @@ markers); the proxy checks it before every write path.
 ## 5. Phasing
 
 **v1 (no gbrain dependency):**
-Topics registry + `session_topics` + topic picker + per-topic model/persona +
+Topics registry + `session_topics` + per-topic model/persona (system bindings) +
 auto-`#topic/` tagging + topic-filtered notes-search + topic suggestion +
-temporary/incognito chats.
+temporary/incognito chats. The user-facing **topic picker** (#241/#242) is
+*superseded by #279* — replaced by inline `#tag`/`@person` mentions +
+autosuggest + the tag-cloud (see §3 "Mention-based tagging"); the internal topic
+bindings stay.
 
 **v2 (gbrain v0.43+):**
 Topics become first-class graph nodes/labels. Chat→topic and data→topic

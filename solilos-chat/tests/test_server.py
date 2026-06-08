@@ -112,6 +112,7 @@ class _FakeHermes:
         self.models = []
         self.turns = []
         self.titles = []
+        self.create_titles = []
         self.deleted = []
         self.images = []
         self.efforts = []
@@ -134,6 +135,7 @@ class _FakeHermes:
         self.maintenance.append(maintenance)
         self.ephemeral.append(ephemeral)
         self.models.append(model)
+        self.create_titles.append(title)
         # First create is "sess-1" (existing tests assert that); later creates
         # (e.g. a compaction continuation) get distinct ids.
         return "sess-1" if len(self.created) == 1 else f"sess-{len(self.created)}"
@@ -681,9 +683,38 @@ async def test_first_turn_creates_session(aiohttp_client):
     assert body["reply"].endswith("hello")
     assert fake.created == ["mdopp"]
     _assert_turns(fake.turns, [("sess-1", "hello")])
-    # First turn derives + persists a title from the user's message, tagged
-    # with the caller's uid so set_title can re-inject the marker (#153).
-    assert fake.titles == [("sess-1", "mdopp", "hello")]
+    # The session is born with a unique, marker-embedded title derived from the
+    # first turn (passed to create_session), not the bare `[uid:...]` marker, so
+    # a first turn can never 400 against an abandoned bare-marker stub (#277).
+    # No separate set_title PATCH rides the turn anymore.
+    assert fake.create_titles == ["hello"]
+    assert fake.titles == []
+
+
+async def test_first_turn_create_title_is_non_bare_marker_unique(aiohttp_client):
+    # Regression for #277: two first turns for the SAME uid must not collide on
+    # the bare `[uid:...]` marker title (Hermes enforces title uniqueness). The
+    # session must be born with a marker-embedded title (uid-attributable for
+    # owner-scoping / has_marker) whose human suffix differs per first turn.
+    fake = _FakeHermes()
+    app = build_app(
+        hermes=fake, remote_user_header="Remote-User", default_uid="household"
+    )
+    client = await aiohttp_client(app)
+
+    for text in ("erster chat", "zweiter chat"):
+        resp = await client.post(
+            "/api/chat", json={"input": text}, headers={"Remote-User": "mdopp"}
+        )
+        assert resp.status == 200
+
+    bare = marker.marker_for("mdopp")
+    embedded = [marker.embed("mdopp", t) for t in fake.create_titles]
+    # Neither create used the bare marker, both stay uid-attributable, and the
+    # two embedded titles differ — so they can't 400 against each other.
+    assert all(t for t in fake.create_titles)
+    assert all(e != bare and marker.has_marker("mdopp", e) for e in embedded)
+    assert embedded[0] != embedded[1]
 
 
 async def test_subsequent_turn_reuses_session(aiohttp_client):
@@ -782,7 +813,8 @@ async def test_stream_creates_session_and_restreams(aiohttp_client):
     assert body.rstrip().endswith("data: {}")  # final 'done' frame
     assert fake.created == ["mdopp"]
     _assert_turns(fake.turns, [("sess-1", "hi")])
-    assert fake.titles == [("sess-1", "mdopp", "hi")]
+    assert fake.create_titles == ["hi"]
+    assert fake.titles == []
 
 
 async def test_stream_thorough_turn_emits_reasoning_event(aiohttp_client):
@@ -1250,7 +1282,8 @@ async def test_ephemeral_extract_to_topic_tags_the_note(aiohttp_client, tmp_path
 
 async def test_non_ephemeral_chat_unaffected(aiohttp_client, tmp_path):
     # A normal chat behaves exactly as before: created without the ephemeral
-    # flag, re-titled, and never carries the incognito guard hint.
+    # flag, born with a title from its first turn, and never carries the
+    # incognito guard hint.
     fake = _FakeHermes()
     app = build_app(
         hermes=fake,
@@ -1266,7 +1299,7 @@ async def test_non_ephemeral_chat_unaffected(aiohttp_client, tmp_path):
         headers={"Remote-User": "mdopp"},
     )
     assert fake.ephemeral == [False]
-    assert len(fake.titles) == 1  # re-titled
+    assert fake.create_titles == ["normaler chat"]  # titled at create
     assert "Temporary/incognito chat" not in fake.turns[-1][1]
 
 
