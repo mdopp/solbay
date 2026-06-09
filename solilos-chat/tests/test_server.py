@@ -15,8 +15,10 @@ from solilos_chat.hermes import (
     _session_owner,
     _session_summary,
 )
+import solilos_chat.server as server_mod
 from solilos_chat.server import (
     _IMAGE_PROMPT,
+    _heartbeat,
     _images_from,
     _normalize,
     _reasoning_from_completed,
@@ -438,6 +440,81 @@ def test_reasoning_from_completed_shapes():
 def test_maybe_json():
     assert _maybe_json('{"a": 1}') == {"a": 1}
     assert _maybe_json("not json") == "not json"
+
+
+# --- Tool-turn keepalive + late completed-answer relay (#319) --------------
+
+
+class _CaptureResp:
+    """A StreamResponse stand-in that records the SSE frames written to it."""
+
+    def __init__(self):
+        self.writes: list[bytes] = []
+
+    async def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+
+async def _slow_then_completed():
+    """An upstream stream like a real tool turn: a tool event, then a long
+    silent gap (two prefills + the tool round-trip), then run.completed whose
+    answer arrives only in the final assistant message (#258 shape)."""
+    import asyncio
+
+    yield {"type": "tool.started", "data": {"tool": "ha_list_entities"}}
+    await asyncio.sleep(0.25)  # the dead-air window the browser would drop on
+    yield {
+        "type": "run.completed",
+        "data": {"messages": [{"role": "assistant", "content": "Bürolicht ist an."}]},
+    }
+
+
+def _events(writes: list[bytes]) -> list[str]:
+    frames = b"".join(writes).decode().split("\n\n")
+    out = []
+    for frame in frames:
+        for line in frame.splitlines():
+            if line.startswith("event:"):
+                out.append(line[len("event:") :].strip())
+    return out
+
+
+def test_heartbeat_keepalives_during_silent_gap(monkeypatch):
+    # A long silent stretch between the tool call and the answer must NOT leave
+    # the SSE connection idle — the heartbeat fills it with keepalive frames so
+    # the browser's streaming fetch is not dropped (#319).
+    import asyncio
+
+    monkeypatch.setattr(server_mod, "_HEARTBEAT_S", 0.05)
+    resp = _CaptureResp()
+
+    async def run():
+        events = []
+        async for ev in _heartbeat(_slow_then_completed(), resp):
+            events.append(ev["type"])
+        return events
+
+    events = asyncio.run(run())
+    # Both upstream events made it through, in order, with no exception escaping.
+    assert events == ["tool.started", "run.completed"]
+    # The gap (0.25s) at a 0.05s interval emitted at least one keepalive frame.
+    assert _events(resp.writes).count("keepalive") >= 1
+
+
+def test_completed_answer_surfaces_after_tool_turn():
+    # The #258 late-delta logic: a tool turn streams no answer deltas, so the
+    # final summary on run.completed is surfaced as a delta. _normalize lifts it
+    # out of the completed messages; the relay then emits it as `delta`.
+    name, data = _normalize(
+        {
+            "type": "run.completed",
+            "data": {
+                "messages": [{"role": "assistant", "content": "Bürolicht ist an."}]
+            },
+        }
+    )
+    assert name == "completed"
+    assert data["answer"] == "Bürolicht ist an."
 
 
 # --- Image attachments (#183) ---------------------------------------------
