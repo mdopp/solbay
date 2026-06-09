@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.7.0](https://github.com/mdopp/solbay/compare/v0.6.0...v0.7.0) (2026-06-09)
+
+
+### Features
+
+* always-on Ollama trace proxy — permanent LLM traceability (phase 1) ([a7904d6](https://github.com/mdopp/solbay/commit/a7904d6e9cf328a8ad9910144a3d87f2140c125c))
+* **chat:** hide internal hint prefixes in history + Wiederholen re-run ([7737c61](https://github.com/mdopp/solbay/commit/7737c61981c0a0bcceb76a6e5df3fbab1aa9efc6)), closes [#309](https://github.com/mdopp/solbay/issues/309) [#308](https://github.com/mdopp/solbay/issues/308)
+* **gatekeeper:** trim MCP prefill noise — suppress empty FastMCP capabilities and drop gatekeeper-mcp from the household profile ([f129284](https://github.com/mdopp/solbay/commit/f129284bb63a889e840944b6639f2338e51b0c48)), closes [#312](https://github.com/mdopp/solbay/issues/312) [#313](https://github.com/mdopp/solbay/issues/313)
+* household runtime batch — SOUL HA grounding, prefill curation, trace detail endpoint ([1c37e52](https://github.com/mdopp/solbay/commit/1c37e524af87d37e5f756413e7dd99362c4613a1))
+* **template:** always-on Ollama trace proxy for permanent LLM traceability ([2098390](https://github.com/mdopp/solbay/commit/20983908e0d2bb61dd25196d397d812e59b930e5))
+* **template:** curate household default profile — drop servicebay-mcp + bundled skills from the first-turn prefill ([c42f691](https://github.com/mdopp/solbay/commit/c42f69167f7e3356af20cd99e98078dbf24a0f64)), closes [#292](https://github.com/mdopp/solbay/issues/292)
+* **template:** hide internal hint prefixes in chat history + add Wiederholen re-run ([dd64ec3](https://github.com/mdopp/solbay/commit/dd64ec3ccd389d494113243d1d4e8238f00fbdb9))
+* **template:** per-turn LLM-step trace panel in the chat UI ([6054cca](https://github.com/mdopp/solbay/commit/6054cca56a493207cbaa8cb4f128a125b1c820e8))
+* **template:** per-turn LLM-step trace panel in the chat UI ([675a554](https://github.com/mdopp/solbay/commit/675a554e9095ca022ce955aea28f3d91326162d4)), closes [#307](https://github.com/mdopp/solbay/issues/307)
+* **template:** persist per-message LLM trace and serve it reopen-consistently ([0fc6786](https://github.com/mdopp/solbay/commit/0fc678697e8ea8ec523c3563fdf2dd4cdf6348b8)), closes [#306](https://github.com/mdopp/solbay/issues/306)
+* **template:** serve exact per-call trace content at /__traces__/&lt;id&gt; ([58797c8](https://github.com/mdopp/solbay/commit/58797c829e1018e7bcf6099bd32876a60fd5c739)), closes [#305](https://github.com/mdopp/solbay/issues/305)
+* **template:** trace persistence, SOUL.md bind-mount, household MCP trim ([f933103](https://github.com/mdopp/solbay/commit/f9331033d5997878266a213bbfd2b48da8852103))
+
+
+### Bug Fixes
+
+* **chat:** retry session create on a title collision instead of (no reply) ([b45a595](https://github.com/mdopp/solbay/commit/b45a5957ca32489b256020519157d5c798e25f7a))
+* **chat:** retry session create on title collision — household (no reply) ([#301](https://github.com/mdopp/solbay/issues/301)) ([bb44b0b](https://github.com/mdopp/solbay/commit/bb44b0bf0f7a560735603a8827f73cc2e72d3b22))
+* **ci:** make release-please reliably trigger the image build for the tag ([7979a5f](https://github.com/mdopp/solbay/commit/7979a5fabed2ee6a44d83898bf76e0c236c736bc))
+* **ci:** make release-please reliably trigger the tag image build ([ccc334b](https://github.com/mdopp/solbay/commit/ccc334b4769910f959cf5a08ac5f6bd18865c453))
+* **template:** keep the admin gateway up across reboots ([d70b18b](https://github.com/mdopp/solbay/commit/d70b18b60885a798260294c46b5a54af14e08432))
+* **template:** keep the admin gateway up across reboots ([#299](https://github.com/mdopp/solbay/issues/299)) ([c7f36e2](https://github.com/mdopp/solbay/commit/c7f36e279392bf5752091fb42b11a59504dd1c34))
+* **template:** point Hermes at the trace proxy permanently via the container env ([b28315a](https://github.com/mdopp/solbay/commit/b28315aeb33bffd51ef005a86c08588cde67f175))
+* **template:** read HA states entity-by-entity so Sol stops reporting all-off ([fea9413](https://github.com/mdopp/solbay/commit/fea9413e45ae9103283ef086bd90a74e51adc3fe)), closes [#289](https://github.com/mdopp/solbay/issues/289)
+* **template:** render trace step-detail from nested request/response shape ([fe3476f](https://github.com/mdopp/solbay/commit/fe3476f08a8040473f6a96e8030f6a71fb50afbb))
+* **template:** renderTraceDetail reads nested request/response trace shape ([69fdea7](https://github.com/mdopp/solbay/commit/69fdea7940549aacbb8c572acb3c6775694962f3)), closes [#316](https://github.com/mdopp/solbay/issues/316)
+* **template:** route Hermes through the trace proxy permanently (read provider from container env) ([2461ee0](https://github.com/mdopp/solbay/commit/2461ee0ddda86b00fa0d8e9f0cdd6a1f18beb15a))
+* **template:** ship SOUL.md via the container bind-mount so post-deploy actually installs it ([f10a906](https://github.com/mdopp/solbay/commit/f10a9065bb9bb8b72e228f924045acb3fa3a0d1b)), closes [#311](https://github.com/mdopp/solbay/issues/311)
+
 ## [0.6.0](https://github.com/mdopp/solbay/compare/v0.5.0...v0.6.0) (2026-06-09)
 
 
