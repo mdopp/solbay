@@ -156,3 +156,49 @@ def test_admin_soul_image_variable_removed(variables):
     # The busybox placeholder image is no longer referenced — its wizard var is
     # gone so the operator isn't prompted for a now-unused image.
     assert "ADMIN_SOUL_IMAGE" not in variables
+
+
+# ── voice routing: the gatekeeper targets the HOUSEHOLD gateway only (#293d) ──
+
+
+def _gatekeeper_block(raw_template: str) -> str:
+    # The gatekeeper container env, bounded at the next container (hermes-admin
+    # follows it and legitimately carries the admin port — don't bleed into it).
+    after = raw_template.split("- name: gatekeeper")[1]
+    return after.split("- name: hermes-admin")[0]
+
+
+def test_gatekeeper_targets_household_gateway(raw_template):
+    gk_block = _gatekeeper_block(raw_template)
+    hermes_url = next(
+        line
+        for line in gk_block.splitlines()
+        if "value:" in line and "HERMES_API_PORT" in line
+    )
+    # Voice rides the household gateway (HERMES_API_PORT / :8642), never admin.
+    assert "{{HERMES_API_PORT}}" in hermes_url
+
+
+def test_gatekeeper_has_no_admin_gateway_access(raw_template):
+    gk_block = _gatekeeper_block(raw_template)
+    # Residents speak to Sol on the household profile; the gatekeeper must carry
+    # neither an admin URL env nor the admin gateway port, so a voice turn can
+    # never reach hermes-admin (:8643).
+    assert "name: HERMES_ADMIN_URL" not in gk_block
+    assert "{{HERMES_ADMIN_API_PORT}}" not in gk_block
+
+
+def test_gatekeeper_fast_model_uses_fast_hermes_model_var(raw_template):
+    gk_block = _gatekeeper_block(raw_template)
+    fast = next(
+        line
+        for line in gk_block.splitlines()
+        if "value:" in line and "FAST_HERMES_MODEL" in line
+    )
+    # The fast voice model is the wizard var, whose default (gemma4:e2b) aligns
+    # with the household profile's pinned model (#293a).
+    assert "{{FAST_HERMES_MODEL}}" in fast
+
+
+def test_fast_hermes_model_default_matches_household_profile(variables):
+    assert variables["FAST_HERMES_MODEL"]["default"] == "gemma4:e2b"

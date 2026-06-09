@@ -419,6 +419,12 @@ spec:
       value: "{{PIPER_URI}}"
     - name: OPENWAKEWORD_URI
       value: "{{OPENWAKEWORD_URI}}"
+    # Voice always talks to the HOUSEHOLD gateway (#293): residents speak to
+    # Sol, never the admin profile. HERMES_API_PORT is the household gateway
+    # (hermes-household, :8642). The gatekeeper is deliberately given NO admin
+    # URL — there is no HERMES_ADMIN_URL here — so a voice turn can never reach
+    # hermes-admin (:8643). The chat proxy is the only component that routes to
+    # the admin gateway, behind the #209/#229 Remote-Groups gate.
     - name: HERMES_URL
       value: "http://127.0.0.1:{{HERMES_API_PORT}}"
     - name: HERMES_TOKEN
@@ -426,6 +432,9 @@ spec:
     # Optional fast/slow adaptive routing (#187): blank = single-session
     # passthrough on Hermes' default model; set to a small model id to try
     # it first per turn and escalate to the default on a low-quality reply.
+    # Default gemma4:e2b — the same model the household profile pins (#293a),
+    # so a fast voice turn runs on the household model the gateway already
+    # serves; the slow escalation falls back to that profile's model.
     - name: FAST_HERMES_MODEL
       value: "{{FAST_HERMES_MODEL}}"
     - name: DEFAULT_UID
