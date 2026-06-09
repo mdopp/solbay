@@ -15,8 +15,9 @@ re-sequenced, not rewritten — so every box-proven behaviour is preserved:
   2. chat phase    — decommission the retired open-webui / hermes-webui pods
      (#139/#140).
   3. solbay phase  — wait_for_hermes → register the periodic crons (#83/#182/
-     #210) → collect + merge the household mcp_servers block (servicebay-mcp +
-     gatekeeper-mcp), read/written through `podman exec solilos-hermes`.
+     #210) → strip the household mcp_servers block (now empty: #292 dropped
+     servicebay-mcp, #313 dropped gatekeeper-mcp), read/written through
+     `podman exec solilos-hermes`.
   4. admin-soul    — splice the operator `servicebay_admin` (read+lifecycle+
      mutate) mcp entry through `podman exec solilos-hermes`, leaving the
      household entries untouched (#175).
@@ -1269,8 +1270,6 @@ HERMES_API_PORT = "8642"
 HERMES_API_KEY = ""
 HERMES_API_URL = "http://127.0.0.1:8642"
 SERVICEBAY_MCP_URL = ""
-GATEKEEPER_MCP_URL = ""
-GATEKEEPER_MCP_TOKEN = ""
 READINESS_TIMEOUT_S = 120
 
 
@@ -1535,9 +1534,9 @@ def merge_config_yaml(servers: list[tuple[str, str, str]]) -> bool:
     """Read config.yaml (via the container), strip any existing mcp_servers
     block, append the rendered household one. Returns True on write.
 
-    The rewrite intentionally re-renders ONLY the household servers
-    (servicebay-mcp + gatekeeper-mcp) and so DROPS the operator
-    `servicebay_admin` entry from the shared config — a ~6.3k-token near-dup
+    The rewrite intentionally re-renders ONLY the household servers (now empty —
+    #292 dropped servicebay-mcp, #313 dropped gatekeeper-mcp) and so DROPS the
+    operator `servicebay_admin` entry from the shared config — a ~6.3k-token near-dup
     that only the operator soul needs and that would bloat every household
     chat's prefill (#268). The admin phase (step 4) re-splices servicebay_admin
     right after this in the same run, so the operator wiring stays intact while
@@ -1583,21 +1582,22 @@ def wait_for_hermes() -> None:
 
 
 def collect_mcp_servers() -> list[tuple[str, str, str]]:
-    """The household (DEFAULT-profile) MCP set: gatekeeper-mcp only.
+    """The household (DEFAULT-profile) MCP set: empty.
 
     servicebay-mcp is DELIBERATELY excluded (#292): its ~50-tool SB control
     surface (deploy_service, exec_command, reboot_node, factory_reset, …) is the
     bulk of the household first-turn tool prefill (~16k of a 20.8k-token turn,
     trace-measured 2026-06-09) and residents don't manage services. It lives ONLY
-    on the admin profile now (admin_mcp_servers / provision_profiles). gatekeeper-
-    mcp stays — household needs its room/resource tools. (ha-mcp is intentionally
-    not wired — HA is served by Hermes' native homeassistant toolset.)"""
-    servers: list[tuple[str, str, str]] = []
-    if GATEKEEPER_MCP_URL:
-        servers.append(("gatekeeper-mcp", GATEKEEPER_MCP_URL, GATEKEEPER_MCP_TOKEN))
-    else:
-        jlog("info", "solbay:mcp", "gatekeeper-mcp skipped", reason="missing url")
-    return servers
+    on the admin profile now (admin_mcp_servers / provision_profiles).
+
+    gatekeeper-mcp is also excluded (#313): set_room/list_rooms only matter for
+    voice room-enrollment, but per-profile binding dragged all 6 mcp_gatekeeper_*
+    tools (~520 tok) into every household turn — text chat (no satellite at all)
+    and every normal voice turn. The gatekeeper now injects the resolved room as
+    an out-of-band context hint on the voice turn (hermes.py), so the household
+    profile needs none of these tools. (ha-mcp is intentionally not wired — HA is
+    served by Hermes' native homeassistant toolset.)"""
+    return []
 
 
 def mark_default_home_no_bundled_skills() -> bool:
@@ -2491,8 +2491,6 @@ def main() -> int:
         HERMES_API_KEY, \
         HERMES_API_URL, \
         SERVICEBAY_MCP_URL, \
-        GATEKEEPER_MCP_URL, \
-        GATEKEEPER_MCP_TOKEN, \
         READINESS_TIMEOUT_S
 
     data_dir = env("DATA_DIR", "/mnt/data")
@@ -2521,13 +2519,6 @@ def main() -> int:
     HERMES_API_KEY = api_key
     HERMES_API_URL = f"http://127.0.0.1:{api_port}"
     SERVICEBAY_MCP_URL = os.environ.get("SERVICEBAY_MCP_URL", "")
-    # The gatekeeper MCP server always listens on the deterministic in-pod port
-    # (gatekeeper container MCP_PORT, hard-coded 10760). Default the URL when
-    # the variable is absent so gatekeeper-mcp is still registered.
-    GATEKEEPER_MCP_URL = (
-        os.environ.get("GATEKEEPER_MCP_URL", "") or "http://127.0.0.1:10760/mcp"
-    )
-    GATEKEEPER_MCP_TOKEN = os.environ.get("GATEKEEPER_MCP_TOKEN", "")
     READINESS_TIMEOUT_S = int(os.environ.get("HERMES_READINESS_TIMEOUT_S", "120"))
 
     # ── 1. hermes phase ──────────────────────────────────────────────────────
