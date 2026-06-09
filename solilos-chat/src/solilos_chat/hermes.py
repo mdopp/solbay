@@ -16,6 +16,7 @@ never sees it.
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -88,26 +89,53 @@ class HermesClient:
         the maintenance marker.
         """
         url = f"{self._base_url}/api/sessions"
-        if ephemeral:
-            session_title = marker.temp_marker(uid) + title
-        elif maintenance:
-            session_title = marker.maint_marker(uid)
-        elif title:
-            session_title = marker.embed(uid, title)
-        else:
-            session_title = marker.marker_for(uid)
-        payload: dict[str, Any] = {"user_id": uid, "title": session_title}
-        if system_prompt:
-            payload["system_prompt"] = system_prompt
-        if model:
-            payload["model"] = model
-        async with aiohttp.ClientSession(timeout=self._timeout) as client:
-            async with client.post(url, json=payload, headers=self._headers()) as resp:
-                body = await self._json_or_raise(resp, "create_session")
-        session_id = _extract_session_id(body)
-        if not session_id:
-            raise HermesError("create_session: no session id in response")
-        return session_id
+
+        def _session_title(suffix: str) -> str:
+            # `suffix` disambiguates a title collision (#301): Hermes enforces
+            # globally-unique titles, so two chats whose first message is the
+            # SAME text (e.g. "Welche Lichter sind an?") would 400 "title already
+            # in use" — a real resident-facing "(no reply)" in the household chat.
+            # The suffix rides AFTER the human title so the marker prefix
+            # (ownership / temp / maint) stays anchored.
+            if ephemeral:
+                return marker.temp_marker(uid) + title + suffix
+            if maintenance:
+                return marker.maint_marker(uid) + suffix
+            if title:
+                return marker.embed(uid, title + suffix)
+            return marker.marker_for(uid) + suffix
+
+        suffix = ""
+        for attempt in range(3):
+            payload: dict[str, Any] = {"user_id": uid, "title": _session_title(suffix)}
+            if system_prompt:
+                payload["system_prompt"] = system_prompt
+            if model:
+                payload["model"] = model
+            async with aiohttp.ClientSession(timeout=self._timeout) as client:
+                async with client.post(
+                    url, json=payload, headers=self._headers()
+                ) as resp:
+                    status = resp.status
+                    text = await resp.text()
+            if status == 400 and ("already in use" in text or "invalid_title" in text):
+                # Retry with a unique suffix appended to the human title.
+                suffix = f" ({uuid.uuid4().hex[:6]})"
+                log.info("chat.session.title_retry", uid=uid, attempt=attempt + 1)
+                continue
+            if status >= 400:
+                log.error(
+                    "chat.hermes.error",
+                    op="create_session",
+                    status=status,
+                    body=text[:500],
+                )
+                raise HermesError(f"create_session: Hermes returned {status}")
+            session_id = _extract_session_id(json.loads(text) if text else {})
+            if not session_id:
+                raise HermesError("create_session: no session id in response")
+            return session_id
+        raise HermesError("create_session: title collision unresolved after retries")
 
     async def list_toolsets(self) -> list[dict[str, Any]]:
         """List Hermes' toolsets (`GET /v1/toolsets`) — built-ins + MCP
