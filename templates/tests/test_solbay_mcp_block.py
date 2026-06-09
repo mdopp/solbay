@@ -68,6 +68,12 @@ _HOUSEHOLD_SERVERS = [
     ("gatekeeper-mcp", "http://127.0.0.1:10760/mcp", ""),
 ]
 
+# Post-#292 the household (DEFAULT-profile) block carries gatekeeper-mcp ONLY —
+# servicebay-mcp's ~50-tool SB control surface is dropped to the admin profile.
+_HOUSEHOLD_GATEKEEPER_ONLY = [
+    ("gatekeeper-mcp", "http://127.0.0.1:10760/mcp", ""),
+]
+
 
 def test_strip_drops_admin_entry(solbay):
     """strip_mcp_servers_block removes the whole prior block, admin included."""
@@ -105,3 +111,24 @@ def test_merge_rewrites_household_block_without_admin(solbay, monkeypatch):
     assert f"Bearer {ADMIN}" not in out
     # The household token survives.
     assert f"Bearer {GOOD}" in out
+
+
+def test_merge_household_block_has_no_servicebay_mcp(solbay, monkeypatch):
+    """#292: with servicebay-mcp dropped from the household collect, the rewritten
+    household config carries gatekeeper-mcp only — no SB control surface bloats
+    the resident first-turn prefill, and the operator entry stays absent."""
+    written = {}
+    monkeypatch.setattr(solbay, "read_config_via_container", lambda: _CONFIG_WITH_ADMIN)
+    monkeypatch.setattr(
+        solbay,
+        "write_config_via_container",
+        lambda c: written.update(c=c) or True,
+    )
+
+    assert solbay.merge_config_yaml(_HOUSEHOLD_GATEKEEPER_ONLY) is True
+    out = written["c"]
+    assert "gatekeeper-mcp:" in out
+    assert "servicebay-mcp:" not in out
+    assert "servicebay_admin" not in out
+    # Non-mcp content (timezone, model, display) is preserved.
+    assert "timezone: Europe/Berlin" in out

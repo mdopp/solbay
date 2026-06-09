@@ -1585,37 +1585,50 @@ def wait_for_hermes() -> None:
 
 
 def collect_mcp_servers() -> list[tuple[str, str, str]]:
-    """Pair each household MCP with its token; skip empty entries. (ha-mcp is
-    intentionally not wired — HA is served by Hermes' native homeassistant
-    toolset.)"""
+    """The household (DEFAULT-profile) MCP set: gatekeeper-mcp only.
+
+    servicebay-mcp is DELIBERATELY excluded (#292): its ~50-tool SB control
+    surface (deploy_service, exec_command, reboot_node, factory_reset, …) is the
+    bulk of the household first-turn tool prefill (~16k of a 20.8k-token turn,
+    trace-measured 2026-06-09) and residents don't manage services. It lives ONLY
+    on the admin profile now (admin_mcp_servers / provision_profiles). gatekeeper-
+    mcp stays — household needs its room/resource tools. (ha-mcp is intentionally
+    not wired — HA is served by Hermes' native homeassistant toolset.)"""
     servers: list[tuple[str, str, str]] = []
-    if SERVICEBAY_MCP_URL:
-        current = existing_servicebay_mcp_token()
-        if current and probe_servicebay_mcp_token(current):
-            jlog(
-                "info",
-                "solbay:mcp",
-                "servicebay-mcp token still valid; keeping existing",
-            )
-            servers.append(("servicebay-mcp", SERVICEBAY_MCP_URL, current))
-        else:
-            token = mint_servicebay_mcp_token()
-            if token:
-                servers.append(("servicebay-mcp", SERVICEBAY_MCP_URL, token))
-            else:
-                jlog(
-                    "warn",
-                    "solbay:mcp",
-                    "servicebay-mcp skipped",
-                    reason="no valid existing token and mint failed (will retry on next redeploy)",
-                )
-    else:
-        jlog("info", "solbay:mcp", "servicebay-mcp skipped", reason="missing url")
     if GATEKEEPER_MCP_URL:
         servers.append(("gatekeeper-mcp", GATEKEEPER_MCP_URL, GATEKEEPER_MCP_TOKEN))
     else:
         jlog("info", "solbay:mcp", "gatekeeper-mcp skipped", reason="missing url")
     return servers
+
+
+def mark_default_home_no_bundled_skills() -> bool:
+    """Drop a `.no-bundled-skills` marker in the DEFAULT profile home (/opt/data)
+    so Hermes loads ONLY the bind-mounted solilos pack at /opt/data/skills, not
+    its ~27 bundled skill packs (#292 — the trim deferred from #293).
+
+    The household persona IS the default profile, served from /opt/data; unlike a
+    named profile (created `--no-skills`), the default home is populated with the
+    bundled catalog on boot, so the marker is how we keep it lean here. The
+    bundled defs are the other half of the household first-turn prefill alongside
+    servicebay-mcp.
+
+    Written VIA THE CONTAINER: /opt/data is hermes-owned mode 0700, so a host-side
+    open() silently fails (#299 lesson). The marker only STOPS re-population — any
+    bundled skill dirs an older boot already materialised under /opt/data/skills
+    must be cleared on the box separately (a verify step). Idempotent."""
+    target = "/opt/data/.no-bundled-skills"
+    if read_file_in_container(target) is not None:
+        return False
+    if not write_file_in_container(target, ""):
+        return False
+    jlog(
+        "info",
+        "solbay:skills",
+        "marked default home .no-bundled-skills — household loads only the solilos pack (#292)",
+        path=target,
+    )
+    return True
 
 
 CHRONICLE_JOB_NAME = "sol-daily-chronicle"
@@ -2520,15 +2533,17 @@ def main() -> int:
     READINESS_TIMEOUT_S = int(os.environ.get("HERMES_READINESS_TIMEOUT_S", "120"))
 
     # ── 1. hermes phase ──────────────────────────────────────────────────────
-    config_path = write_config_yaml(
+    write_config_yaml(
         data_dir,
         provider_url,
         model,
         honcho_port=honcho_port,
         honcho_api_key=honcho_api_key,
     )
-    if config_path:
-        ensure_sb_mcp_servers_block(config_path, sb_api)
+    # No servicebay-mcp seed into the household/global config (#292): the default
+    # profile drops the ~50-tool SB control surface; it lives only on the admin
+    # profile. The solbay phase below rewrites this config's mcp_servers block
+    # (gatekeeper-mcp only) over anything an older redeploy left behind.
 
     write_soul_md(data_dir)
 
@@ -2562,6 +2577,7 @@ def main() -> int:
 
     # ── 3. solbay phase ──────────────────────────────────────────────────────
     wait_for_hermes()
+    mark_default_home_no_bundled_skills()
     register_chronicle_cron()
     register_problem_summarizer_cron()
     register_chat_compactor_cron()

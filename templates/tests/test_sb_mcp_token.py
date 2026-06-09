@@ -138,42 +138,22 @@ def test_first_install_appends_block(hermes, tmp_path, monkeypatch):
     assert "mcp_servers:" in out and f"Bearer {GOOD}" in out
 
 
-# ── solbay: never persist junk, self-heal via rewrite ────────────
+# ── solbay: household collect drops servicebay-mcp entirely (#292) ────────────
 
 
-def test_household_collect_skips_when_mint_fails(household, monkeypatch):
+def test_household_collect_never_includes_servicebay_mcp(household, monkeypatch):
+    """#292: the household (DEFAULT-profile) config must NEVER carry servicebay-
+    mcp — its ~50-tool SB control surface is the bulk of the first-turn prefill,
+    and lives only on the admin profile now. Even with a valid existing token /
+    URL present, collect_mcp_servers must not return a servicebay-mcp entry."""
     monkeypatch.setattr(household, "SERVICEBAY_MCP_URL", "http://127.0.0.1:5888/mcp")
-    monkeypatch.setattr(household, "GATEKEEPER_MCP_URL", "")
-    monkeypatch.setattr(household, "existing_servicebay_mcp_token", lambda: None)
-    monkeypatch.setattr(household, "mint_servicebay_mcp_token", lambda *a, **k: None)
+    monkeypatch.setattr(household, "GATEKEEPER_MCP_URL", "http://127.0.0.1:10760/mcp")
+    monkeypatch.setattr(household, "GATEKEEPER_MCP_TOKEN", "")
 
     servers = household.collect_mcp_servers()
-    # Junk fallback must never be spliced in.
     assert all(name != "servicebay-mcp" for name, _, _ in servers)
-    assert JUNK not in [tok for _, _, tok in servers]
-
-
-def test_household_collect_keeps_valid_existing(household, monkeypatch):
-    monkeypatch.setattr(household, "SERVICEBAY_MCP_URL", "http://127.0.0.1:5888/mcp")
-    monkeypatch.setattr(household, "GATEKEEPER_MCP_URL", "")
-    monkeypatch.setattr(household, "existing_servicebay_mcp_token", lambda: GOOD)
-    monkeypatch.setattr(household, "probe_servicebay_mcp_token", lambda t: True)
-
-    def boom(*a, **k):
-        raise AssertionError("re-minted a valid token")
-
-    monkeypatch.setattr(household, "mint_servicebay_mcp_token", boom)
-    servers = household.collect_mcp_servers()
-    assert ("servicebay-mcp", "http://127.0.0.1:5888/mcp", GOOD) in servers
-
-
-def test_household_collect_mints_when_existing_invalid(household, monkeypatch):
-    monkeypatch.setattr(household, "SERVICEBAY_MCP_URL", "http://127.0.0.1:5888/mcp")
-    monkeypatch.setattr(household, "GATEKEEPER_MCP_URL", "")
-    monkeypatch.setattr(household, "existing_servicebay_mcp_token", lambda: None)
-    monkeypatch.setattr(household, "mint_servicebay_mcp_token", lambda *a, **k: GOOD)
-    servers = household.collect_mcp_servers()
-    assert ("servicebay-mcp", "http://127.0.0.1:5888/mcp", GOOD) in servers
+    # gatekeeper-mcp stays — household needs its room/resource tools.
+    assert ("gatekeeper-mcp", "http://127.0.0.1:10760/mcp", "") in servers
 
 
 def test_household_existing_token_parser_rejects_junk(household, monkeypatch):
