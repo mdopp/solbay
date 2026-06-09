@@ -189,6 +189,19 @@ def test_admin_boot_hook_forces_running_before_reconcile(pd, fc):
     assert pd.write_admin_gateway_boot_hook() is False
 
 
+# ── default-home .no-bundled-skills marker (#292), written via the container ─
+
+
+def test_no_bundled_marker_written_to_default_home(pd, fc):
+    # The household persona is the DEFAULT profile served from /opt/data; the
+    # marker drops Hermes' ~27 bundled packs so it loads only the solilos pack.
+    assert pd.mark_default_home_no_bundled_skills() is True
+    assert "/opt/data/.no-bundled-skills" in fc.files
+    # Written via the container (the 0700 default home is unwritable host-side).
+    # Idempotent: a redeploy sees the marker and is a no-op.
+    assert pd.mark_default_home_no_bundled_skills() is False
+
+
 # ── per-profile .env port (the only port lever that works, #293) ────────────
 
 
