@@ -13,6 +13,7 @@ import json
 import re
 import time
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -1113,7 +1114,7 @@ def build_app(
             )
             persist_mentions(uid, session_id, text, ephemeral=ephemeral)
             stream = client.chat_stream(session_id, turn_text, images, effort)
-            async for event in stream:
+            async for event in _heartbeat(stream, resp):
                 if cancel.is_set():
                     # Closing the upstream generator aborts the Hermes/Ollama
                     # run (#192) — stops generation, not just our forwarding.
@@ -1435,6 +1436,42 @@ async def _send_event(
 ) -> None:
     frame = f"event: {event}\ndata: {json.dumps(data)}\n\n"
     await resp.write(frame.encode("utf-8"))
+
+
+# A tool-invocation turn runs two sequential Ollama passes (tool-selection, then
+# the answer) with a tool round-trip between them — Hermes streams nothing for
+# the whole prefill of each pass, which on a busy GPU is well over a minute of
+# dead air. The browser's streaming fetch (and any reverse proxy in front) drops
+# an idle connection long before the late answer arrives (#319), so we emit a
+# keepalive frame whenever the upstream is silent for this long. The client
+# ignores the unknown event; it only keeps the connection warm.
+_HEARTBEAT_S = 10.0
+
+
+async def _heartbeat(
+    stream: AsyncIterator[dict[str, Any]], resp: web.StreamResponse
+) -> AsyncIterator[dict[str, Any]]:
+    """Forward `stream`'s events, emitting a keepalive on every silent gap."""
+    it = stream.__aiter__()
+    nxt: asyncio.Future[dict[str, Any]] | None = None
+    try:
+        while True:
+            nxt = asyncio.ensure_future(it.__anext__())
+            while True:
+                try:
+                    event = await asyncio.wait_for(asyncio.shield(nxt), _HEARTBEAT_S)
+                except TimeoutError:
+                    await _send_event(resp, "keepalive", {})
+                    continue
+                except StopAsyncIteration:
+                    nxt = None
+                    return
+                break
+            nxt = None
+            yield event
+    finally:
+        if nxt is not None:
+            nxt.cancel()
 
 
 def _normalize(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
