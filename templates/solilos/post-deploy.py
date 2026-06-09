@@ -382,56 +382,56 @@ def _soul_sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+# The household SOUL.md, the shipped marker, and the persona target all live in
+# the hermes-data volume (/opt/data), owned by the hermes user mode 0700 — the
+# post-deploy runs as a different host uid, so host-side open()/chmod silently
+# fail. Read + write them THROUGH the container, same as write_profile_soul.
+# The shipped soul ships via the household skill pack's bind mount; the persona
+# target is the SOUL_PATH the chat/config containers read.
+SHIPPED_SOUL_CONTAINER_SOURCE = "/opt/data/skills/solilos/SOUL.md"
+SOUL_CONTAINER_TARGET = "/opt/data/SOUL.md"
+SOUL_MARKER_CONTAINER_PATH = "/opt/data/.soul.shipped.sha256"
+
+
 def _record_shipped_soul(marker_path: str, soul: str) -> None:
-    """Write the sha256 of the just-installed shipped soul alongside it (#283),
-    so a later redeploy can tell an unmodified shipped soul (safe to update)
-    from an operator-edited one (must be preserved). Best-effort."""
-    try:
-        with open(marker_path, "w", encoding="utf-8") as f:
-            f.write(_soul_sha256(soul) + "\n")
-        os.chmod(marker_path, 0o644)
-    except OSError as e:
+    """Record the sha256 of the just-installed shipped soul (#283), so a later
+    redeploy can tell an unmodified shipped soul (safe to update) from an
+    operator-edited one (must be preserved). Written via the container (the
+    hermes data dir is 0700). Best-effort."""
+    if not write_file_in_container(marker_path, _soul_sha256(soul) + "\n"):
         jlog(
             "warn",
             "hermes:soul",
             "could not record shipped-soul hash",
             path=marker_path,
-            error=str(e),
         )
 
 
-def write_soul_md(data_dir: str) -> bool:
+def write_soul_md() -> bool:
     """Install the Solilos SOUL.md and keep it in sync with the shipped soul on
     redeploy without clobbering an operator-edited one (#283 sidecar-hash
-    guard). Returns True when the file was written."""
-    target = os.path.join(data_dir, "hermes", "SOUL.md")
-    marker = os.path.join(data_dir, "hermes", ".soul.shipped.sha256")
-    source = os.path.join(os.path.dirname(os.path.abspath(__file__)), "SOUL.md")
-    try:
-        with open(source, encoding="utf-8") as f:
-            soul = f.read()
-    except OSError as e:
-        jlog("warn", "hermes:soul", "shipped SOUL.md missing — skipping", error=str(e))
+    guard). Returns True when the file was written.
+
+    The shipped soul, persona target, and marker all live in the hermes-data
+    volume (0700, hermes-owned), so every read/write goes through the container
+    (#311); the shipped soul is read from the household skill pack's bind mount,
+    not the post-deploy's staging dir (ServiceBay stages only .py/.env)."""
+    soul = read_file_in_container(SHIPPED_SOUL_CONTAINER_SOURCE)
+    if not soul:
+        jlog(
+            "warn",
+            "hermes:soul",
+            "shipped SOUL.md not readable in container — skipping",
+            source=SHIPPED_SOUL_CONTAINER_SOURCE,
+        )
         return False
-    existing = ""
-    if os.path.exists(target):
-        try:
-            with open(target, encoding="utf-8") as f:
-                existing = f.read()
-        except OSError:
-            existing = ""
+    existing = read_file_in_container(SOUL_CONTAINER_TARGET) or ""
     if existing == soul:
-        if not os.path.exists(marker):
-            _record_shipped_soul(marker, soul)
+        if read_file_in_container(SOUL_MARKER_CONTAINER_PATH) is None:
+            _record_shipped_soul(SOUL_MARKER_CONTAINER_PATH, soul)
         return False
 
-    recorded = ""
-    if os.path.exists(marker):
-        try:
-            with open(marker, encoding="utf-8") as f:
-                recorded = f.read().strip()
-        except OSError:
-            recorded = ""
+    recorded = (read_file_in_container(SOUL_MARKER_CONTAINER_PATH) or "").strip()
 
     if existing.strip():
         if recorded:
@@ -440,7 +440,7 @@ def write_soul_md(data_dir: str) -> bool:
                     "info",
                     "hermes:soul",
                     "leaving operator-edited SOUL.md untouched — a shipped update is available",
-                    path=target,
+                    path=SOUL_CONTAINER_TARGET,
                 )
                 return False
         elif STOCK_SOUL_MARKER not in existing:
@@ -448,21 +448,19 @@ def write_soul_md(data_dir: str) -> bool:
                 "info",
                 "hermes:soul",
                 "leaving customised SOUL.md untouched",
-                path=target,
+                path=SOUL_CONTAINER_TARGET,
             )
             return False
-    try:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(soul)
-        os.chmod(target, 0o644)
-    except OSError as e:
+    if not write_file_in_container(SOUL_CONTAINER_TARGET, soul):
         jlog(
-            "error", "hermes:soul", "could not write SOUL.md", path=target, error=str(e)
+            "error",
+            "hermes:soul",
+            "could not write SOUL.md",
+            path=SOUL_CONTAINER_TARGET,
         )
         return False
-    _record_shipped_soul(marker, soul)
-    jlog("info", "hermes:soul", "installed Solilos SOUL.md", path=target)
+    _record_shipped_soul(SOUL_MARKER_CONTAINER_PATH, soul)
+    jlog("info", "hermes:soul", "installed Solilos SOUL.md", path=SOUL_CONTAINER_TARGET)
     return True
 
 
@@ -2544,8 +2542,8 @@ def main() -> int:
     # profile drops the ~50-tool SB control surface; it lives only on the admin
     # profile. The solbay phase below rewrites this config's mcp_servers block
     # (gatekeeper-mcp only) over anything an older redeploy left behind.
-
-    write_soul_md(data_dir)
+    # SOUL.md is installed in the solbay phase (after wait_for_hermes): it is
+    # read/written through the container now (#311), so the container must be up.
 
     ha_token = adopt_ha_long_lived_token(data_dir)
     if ha_token:
@@ -2577,6 +2575,11 @@ def main() -> int:
 
     # ── 3. solbay phase ──────────────────────────────────────────────────────
     wait_for_hermes()
+    # Install SOUL.md now the container is up: it's read from the household skill
+    # pack's bind mount and written to /opt/data/SOUL.md via the container (the
+    # data dir is 0700, and ServiceBay stages only .py/.env so the old host-side
+    # read of the adjacent shipped SOUL.md never reached the box — #311).
+    write_soul_md()
     mark_default_home_no_bundled_skills()
     register_chronicle_cron()
     register_problem_summarizer_cron()
