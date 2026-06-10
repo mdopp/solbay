@@ -190,6 +190,50 @@ def test_admin_gateway_boot_hook_mounted_and_written(pd, raw_template, post_depl
     assert "016-ensure-admin-gateway" < "02-reconcile-profiles"
 
 
+def test_sol_deep_gateway_boot_hook_mounted_and_written(
+    pd, raw_template, post_deploy_src
+):
+    # The sol-deep reboot-persistence hook (#332) is written by post-deploy and
+    # mounted into cont-init.d, sorting before 02-reconcile-profiles.
+    assert "write_sol_deep_gateway_boot_hook()" in post_deploy_src
+    hermes = _block(raw_template, "hermes")
+    assert "/etc/cont-init.d/017-ensure-sol-deep-gateway" in hermes
+    assert "subPath: 017-ensure-sol-deep-gateway" in hermes
+    assert "017-ensure-sol-deep-gateway" < "02-reconcile-profiles"
+
+
+def test_hermes_declares_the_sol_deep_gateway_port(raw_template):
+    hermes = _block(raw_template, "hermes")
+    ports = hermes.split("ports:", 1)[1].split("volumeMounts:", 1)[0]
+    assert "{{HERMES_DEEP_API_PORT}}" in ports
+
+
+def test_post_deploy_provisions_and_starts_sol_deep_gateway(pd, post_deploy_src):
+    # The sol-deep profile is provisioned and its gateway started AFTER the
+    # restart, the same s6-safe `gateway start` path as admin.
+    assert "provision_sol_deep_profile(" in post_deploy_src
+    assert "start_sol_deep_gateway()" in post_deploy_src
+
+
+def test_deep_api_port_variable_defined_and_distinct(variables):
+    assert "HERMES_DEEP_API_PORT" in variables
+    assert variables["HERMES_DEEP_API_PORT"]["default"] == "8644"
+    # Distinct from both the household and admin gateway ports.
+    assert (
+        variables["HERMES_DEEP_API_PORT"]["default"]
+        != variables["HERMES_API_PORT"]["default"]
+    )
+    assert (
+        variables["HERMES_DEEP_API_PORT"]["default"]
+        != variables["HERMES_ADMIN_API_PORT"]["default"]
+    )
+
+
+def test_ports_annotation_raw_lists_deep_port(raw_template):
+    ann = raw_template.split("servicebay.ports:")[1].splitlines()[0]
+    assert "{{HERMES_DEEP_API_PORT}}" in ann
+
+
 def test_admin_profile_created_no_skills(pd, monkeypatch):
     # `hermes profile create admin --no-skills` — a lean, empty profile (no
     # ~105-skill bundled-catalog copy), the box-verified way to keep it lean.

@@ -2535,6 +2535,90 @@ async def test_maint_persona_cannot_escalate_mid_session(aiohttp_client):
     _assert_turns(fake.turns, [("maint-1", "status")])
 
 
+# --- Sol Gründlich (sol-deep) routing (#332) ------------------------------
+
+
+async def test_deep_persona_routes_turn_to_deep_gateway(aiohttp_client):
+    # Selecting the sol-deep persona routes a NEW chat to the sol-deep gateway
+    # (12b) — open to every resident, NO admin gate. The household gateway never
+    # sees the turn.
+    household = _FakeHermes()
+    deep = _FakeHermes()
+    app = build_app(
+        hermes=household,
+        hermes_deep=deep,
+        remote_user_header="Remote-User",
+        default_uid="household",
+    )
+    client = await aiohttp_client(app)
+
+    resp = await client.post(
+        "/api/chat",
+        json={"input": "denk gründlich nach", "personality": "sol-deep"},
+        headers={"Remote-User": "cdopp", "Remote-Groups": "family"},
+    )
+    assert resp.status == 200
+    body = await resp.json()
+    assert deep.created == ["cdopp"]
+    _assert_turns(deep.turns, [(body["session_id"], "denk gründlich nach")])
+    assert household.created == []
+    assert household.turns == []
+
+
+async def test_deep_session_followups_stay_on_deep_gateway(aiohttp_client):
+    # A session born on the deep gateway is sticky: its follow-up turns route
+    # back to deep even when the per-turn persona isn't re-sent (Hermes session
+    # state is per-gateway).
+    household = _FakeHermes()
+    deep = _FakeHermes()
+    app = build_app(
+        hermes=household,
+        hermes_deep=deep,
+        remote_user_header="Remote-User",
+        default_uid="household",
+    )
+    client = await aiohttp_client(app)
+
+    first = await client.post(
+        "/api/chat",
+        json={"input": "eins", "personality": "sol-deep"},
+        headers={"Remote-User": "cdopp", "Remote-Groups": "family"},
+    )
+    sid = (await first.json())["session_id"]
+    second = await client.post(
+        "/api/chat",
+        json={"input": "zwei", "session_id": sid},
+        headers={"Remote-User": "cdopp", "Remote-Groups": "family"},
+    )
+    assert second.status == 200
+    assert household.turns == []
+    assert [t[1].rsplit("\n\n", 1)[-1] for t in deep.turns] == ["eins", "zwei"]
+
+
+async def test_default_persona_stays_on_household_not_deep(aiohttp_client):
+    # Without the sol-deep persona a normal turn stays on the household (fast)
+    # gateway; the deep gateway is untouched.
+    household = _FakeHermes()
+    deep = _FakeHermes()
+    app = build_app(
+        hermes=household,
+        hermes_deep=deep,
+        remote_user_header="Remote-User",
+        default_uid="household",
+    )
+    client = await aiohttp_client(app)
+
+    resp = await client.post(
+        "/api/chat",
+        json={"input": "wie spät", "personality": "sol"},
+        headers={"Remote-User": "cdopp", "Remote-Groups": "family"},
+    )
+    assert resp.status == 200
+    assert household.created == ["cdopp"]
+    assert deep.created == []
+    assert deep.turns == []
+
+
 async def test_csp_header_from_default_frame_ancestors(aiohttp_client):
     app = build_app(
         hermes=_FakeHermes(),

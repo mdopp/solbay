@@ -11,12 +11,14 @@ metadata:
     # default the single hermes container serves, HERMES_API_PORT) + its
     # dashboard, the admin-profile gateway's API (HERMES_ADMIN_API_PORT — the
     # SAME container additionally starts `hermes -p admin gateway start`, #293),
-    # the chat proxy (chat), and the gatekeeper's Wyoming listener (gatekeeper).
-    # config-agent + admin-soul bind loopback only and expose nothing.
-    # ServiceBay can't substitute {{VAR}} inside an annotation block scalar
-    # (#136) but DOES substitute in this inline annotation, so the ports stay
-    # variable-driven.
-    servicebay.ports: "{{HERMES_API_PORT}}/tcp,{{HERMES_ADMIN_API_PORT}}/tcp,{{HERMES_DASHBOARD_PORT}}/tcp,{{HERMES_CHAT_PORT}}/tcp,{{GATEKEEPER_PORT}}/tcp"
+    # the sol-deep-profile gateway's API (HERMES_DEEP_API_PORT — that container
+    # also starts `hermes -p sol-deep gateway start`, Sol on 12b for the
+    # "Gründlich" mode + crons, #332), the chat proxy (chat), and the gatekeeper's
+    # Wyoming listener (gatekeeper). config-agent + admin-soul bind loopback only
+    # and expose nothing. ServiceBay can't substitute {{VAR}} inside an annotation
+    # block scalar (#136) but DOES substitute in this inline annotation, so the
+    # ports stay variable-driven.
+    servicebay.ports: "{{HERMES_API_PORT}}/tcp,{{HERMES_ADMIN_API_PORT}}/tcp,{{HERMES_DEEP_API_PORT}}/tcp,{{HERMES_DASHBOARD_PORT}}/tcp,{{HERMES_CHAT_PORT}}/tcp,{{GATEKEEPER_PORT}}/tcp"
     # External dependencies only (#271). hermes/solilos-chat/solbay/admin-soul
     # no longer depend on each other — they are now one Pod — so the only
     # remaining edges are to services OUTSIDE this Pod: ollama (the LLM Hermes
@@ -211,6 +213,10 @@ spec:
     # is brought up by post-deploy's `hermes -p admin gateway start`, not by
     # the container's own `args`.
     - containerPort: {{HERMES_ADMIN_API_PORT}}
+    # The in-container sol-deep-profile gateway (#332) — Sol on 12b for the
+    # "Gründlich" mode + crons — binds this the same way (post-deploy's
+    # `hermes -p sol-deep gateway start`); declared for documentation.
+    - containerPort: {{HERMES_DEEP_API_PORT}}
     - containerPort: {{HERMES_DASHBOARD_PORT}}
     volumeMounts:
     - mountPath: /opt/data
@@ -258,6 +264,10 @@ spec:
     - mountPath: /etc/cont-init.d/016-ensure-admin-gateway
       name: hermes-data
       subPath: 016-ensure-admin-gateway
+    # #332 — same reboot-survival hook for the sol-deep gateway (Sol on 12b).
+    - mountPath: /etc/cont-init.d/017-ensure-sol-deep-gateway
+      name: hermes-data
+      subPath: 017-ensure-sol-deep-gateway
 
   # Privileged config sidecar (Solilos). The public chat pod can't write
   # Hermes' own data dir (0700, owned by a foreign subuid), so an admin's

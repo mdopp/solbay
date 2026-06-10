@@ -19,6 +19,7 @@ class Settings:
     port: int
     hermes_url: str
     hermes_admin_url: str
+    hermes_deep_url: str
     hermes_token: str
     remote_user_header: str
     remote_groups_header: str
@@ -52,6 +53,12 @@ class Settings:
             hermes_admin_url=os.environ.get(
                 "HERMES_ADMIN_URL", "http://127.0.0.1:8643"
             ),
+            # The sol-deep Hermes gateway (#332): the same container's `sol-deep`
+            # profile (12b + the Sol soul/skills), reached by the "Sol Gründlich"
+            # persona — the interactive thorough mode + the background crons. Open
+            # to every resident (no admin gate). Household chat stays on HERMES_URL
+            # (:8642, fast e2b).
+            hermes_deep_url=os.environ.get("HERMES_DEEP_URL", "http://127.0.0.1:8644"),
             hermes_token=os.environ.get("API_SERVER_KEY", ""),
             # Authelia forwards the authenticated identity on this header
             # via the trusted reverse proxy. We never trust it from an

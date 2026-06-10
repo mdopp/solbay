@@ -826,6 +826,31 @@ _ADMIN_GATEWAY_BOOT_HOOK_SCRIPT = (
 )
 
 
+# Same #299 reboot-survival hook for the sol-deep gateway (Sol on 12b — the
+# "Gründlich" interactive mode + the background crons). Sorts `017-` < `02-` so it
+# forces sol-deep's recorded gateway_state to `running` before 02-reconcile, which
+# then auto-starts it on every boot. No-op until the sol-deep profile exists.
+SOL_DEEP_GATEWAY_BOOT_HOOK = "017-ensure-sol-deep-gateway"
+_SOL_DEEP_GATEWAY_BOOT_HOOK_SCRIPT = (
+    "#!/command/with-contenv sh\n"
+    "# Keep the sol-deep profile gateway up across reboots (#299): force its\n"
+    "# recorded gateway_state to `running` before 02-reconcile-profiles starts it.\n"
+    'state="/opt/data/profiles/sol-deep/gateway_state.json"\n'
+    '[ -f "$state" ] || exit 0\n'
+    'run() { [ "$(id -u)" = 0 ] && set -- s6-setuidgid hermes "$@"; "$@"; }\n'
+    "run /opt/hermes/.venv/bin/python - \"$state\" <<'PY' || true\n"
+    "import json, sys\n"
+    "p = sys.argv[1]\n"
+    "try:\n"
+    "    d = json.load(open(p))\n"
+    "except Exception:\n"
+    "    d = {}\n"
+    'd["gateway_state"] = "running"\n'
+    'json.dump(d, open(p, "w"))\n'
+    "PY\n"
+)
+
+
 def write_admin_gateway_boot_hook() -> bool:
     """Write the cont-init hook (`/opt/data/016-ensure-admin-gateway`, mounted at
     /etc/cont-init.d/016-ensure-admin-gateway) that keeps the admin gateway up
@@ -855,6 +880,32 @@ def write_admin_gateway_boot_hook() -> bool:
         "info",
         "hermes:admin-boot-hook",
         "wrote admin-gateway boot hook (#299)",
+        path=target,
+    )
+    return True
+
+
+def write_sol_deep_gateway_boot_hook() -> bool:
+    """Write the cont-init hook that keeps the sol-deep gateway up across reboots
+    (#299), the sol-deep twin of write_admin_gateway_boot_hook. Same container-
+    side write + chmod (the data dir is hermes-owned 0700). Returns True on write."""
+    target = f"/opt/data/{SOL_DEEP_GATEWAY_BOOT_HOOK}"
+    if read_file_in_container(target) == _SOL_DEEP_GATEWAY_BOOT_HOOK_SCRIPT:
+        return False
+    if not write_file_in_container(target, _SOL_DEEP_GATEWAY_BOOT_HOOK_SCRIPT):
+        return False
+    try:
+        subprocess.run(
+            ["podman", "exec", HERMES_CONTAINER, "chmod", "0755", target],
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+    jlog(
+        "info",
+        "hermes:sol-deep-boot-hook",
+        "wrote sol-deep-gateway boot hook (#299)",
         path=target,
     )
     return True
@@ -1299,10 +1350,16 @@ def hermes_request_json(
     method: str = "GET",
     payload: dict[str, object] | None = None,
     timeout: float = 10.0,
+    base_url: str = "",
 ) -> tuple[int, object | None]:
-    """Call Hermes' API with bearer auth, returning (status, parsed-body)."""
+    """Call Hermes' API with bearer auth, returning (status, parsed-body).
+
+    `base_url` selects the target gateway (default = the household default on
+    HERMES_API_URL); pass a profile gateway's loopback URL to address it (e.g. the
+    sol-deep gateway on :8644 for its crons — jobs are per-gateway, #332)."""
+    base = base_url or HERMES_API_URL
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(f"{HERMES_API_URL}{path}", data=data, method=method)
+    req = urllib.request.Request(f"{base}{path}", data=data, method=method)
     req.add_header("Authorization", f"Bearer {HERMES_API_KEY}")
     if data is not None:
         req.add_header("Content-Type", "application/json")
@@ -1671,10 +1728,14 @@ PROBLEM_SUMMARIZER_JOB_NAME = "sol-problem-summarizer"
 CHAT_COMPACTOR_JOB_NAME = "sol-chat-compactor"
 
 
-def _register_cron(name: str, schedule: str, prompt: str) -> None:
+def _register_cron(name: str, schedule: str, prompt: str, base_url: str = "") -> None:
     """Register a Hermes cron job by name, idempotently (skips when one of the
-    same name already exists). Over HTTP so jobs.json stays hermes-owned."""
-    status, body = hermes_request_json("/api/jobs", "GET")
+    same name already exists). Over HTTP so jobs.json stays hermes-owned.
+
+    `base_url` selects the gateway the job is registered on (jobs are per-gateway,
+    #332): default = the household default; the sol-deep gateway (:8644) for the
+    background tasks so they run on the 12b thorough model, not the fast e2b."""
+    status, body = hermes_request_json("/api/jobs", "GET", base_url=base_url)
     if status == 0:
         jlog(
             "warn",
@@ -1694,7 +1755,9 @@ def _register_cron(name: str, schedule: str, prompt: str) -> None:
         "skills": [name],
         "deliver": "local",
     }
-    create_status, _ = hermes_request_json("/api/jobs", "POST", payload)
+    create_status, _ = hermes_request_json(
+        "/api/jobs", "POST", payload, base_url=base_url
+    )
     if create_status in (200, 201):
         jlog("info", "solbay:cron", "registered cron", name=name, schedule=schedule)
     else:
@@ -1707,7 +1770,7 @@ def _register_cron(name: str, schedule: str, prompt: str) -> None:
         )
 
 
-def register_chronicle_cron() -> None:
+def register_chronicle_cron(base_url: str = "") -> None:
     """Register the daily family-chronicle cron job (#83)."""
     _register_cron(
         CHRONICLE_JOB_NAME,
@@ -1717,10 +1780,11 @@ def register_chronicle_cron() -> None:
         "do not ask anyone for highlights; compile from the day's "
         "ingested notes and household events you can see, and write a "
         "short honest entry (or skip a section) rather than inventing.",
+        base_url=base_url,
     )
 
 
-def register_problem_summarizer_cron() -> None:
+def register_problem_summarizer_cron(base_url: str = "") -> None:
     """Register the weekly troubleshooting-KB cron job (#182)."""
     _register_cron(
         PROBLEM_SUMMARIZER_JOB_NAME,
@@ -1732,10 +1796,11 @@ def register_problem_summarizer_cron() -> None:
         "them into /opt/data/notes/knowledge-base/troubleshooting.md "
         "(append new problems, update existing ones in place). If nothing "
         "new surfaced, leave the file untouched rather than inventing.",
+        base_url=base_url,
     )
 
 
-def register_chat_compactor_cron() -> None:
+def register_chat_compactor_cron(base_url: str = "") -> None:
     """Register the nightly chat-compaction cron job (#210)."""
     _register_cron(
         CHAT_COMPACTOR_JOB_NAME,
@@ -1750,6 +1815,7 @@ def register_chat_compactor_cron() -> None:
         "transcript so the chat can continue in a small context. Never delete a "
         "chat; the original transcript stays. If nothing is stale enough to "
         "compact, do nothing.",
+        base_url=base_url,
     )
 
 
@@ -1984,6 +2050,17 @@ def ensure_admin_mcp_entry() -> bool:
 ADMIN_PROFILE = "admin"
 # The shared, bind-mounted admin skill pack symlinked into the admin profile.
 ADMIN_SKILL_PACK = "admin-soul"
+
+# The `sol-deep` profile (#332): the SAME Sol identity as the household default,
+# but on the 12b thorough model — for the interactive "Sol Gründlich" chat mode
+# and the background/cron tasks, NEVER for household interactive chat (which stays
+# on e2b/fast). It mirrors the household persona: the bind-mounted `solilos` Sol
+# skill pack + the Sol SOUL.md, the household (empty) MCP set — only the model and
+# the gateway port differ. The household default still serves every fast resident
+# turn; sol-deep runs alongside it in the same container (like `admin`).
+SOL_DEEP_PROFILE = "sol-deep"
+# The household Sol skill pack, bind-mounted at /opt/data/skills/solilos.
+SOL_DEEP_SKILL_PACK = "solilos"
 
 
 def render_ollama_model_block(provider_url: str, model: str) -> str:
@@ -2469,6 +2546,56 @@ def start_admin_gateway() -> None:
         )
 
 
+def provision_sol_deep_profile(provider_url: str, deep_port: str = "") -> None:
+    """Provision the `sol-deep` profile (#332): the Sol identity on the 12b
+    thorough model, running alongside household + admin in the same container.
+
+    Mirrors provision_profiles' admin recipe, but with the household persona's
+    soul + skills instead of the operator's: `hermes profile create --no-skills`
+    (an EMPTY, lean profile), its config.yaml (ollama, gemma4:12b, the household
+    EMPTY MCP set — no servicebay control surface, same as the default profile),
+    a per-profile `.env` pinning API_SERVER_PORT so its gateway binds :8644 (the
+    container env overrides the config.yaml port, #293), the shared `solilos` Sol
+    skill pack symlinked in, and the Sol SOUL.md (read through the container from
+    the bind-mounted pack). Every per-profile file is written via the container
+    (the profile dir is hermes-owned 0700, unwritable host-side). Idempotent +
+    fail-soft. The gateway is brought up by start_sol_deep_gateway after the final
+    restart; the boot hook keeps it up on later boots."""
+    deep_model = env("SOL_DEEP_PROFILE_MODEL", "gemma4:12b")
+    hermes_profile_create(SOL_DEEP_PROFILE, no_skills=True)
+    write_profile_config(
+        SOL_DEEP_PROFILE,
+        render_profile_config_yaml(provider_url, deep_model, collect_mcp_servers()),
+    )
+    write_profile_env_port(SOL_DEEP_PROFILE, deep_port)
+    symlink_profile_skill(SOL_DEEP_PROFILE, SOL_DEEP_SKILL_PACK)
+    # The Sol soul, read from the bind-mounted household skill pack IN the
+    # container (host staging may omit skills/, box-verified #293).
+    write_profile_soul(
+        SOL_DEEP_PROFILE, f"/opt/data/skills/{SOL_DEEP_SKILL_PACK}/SOUL.md"
+    )
+    jlog(
+        "info",
+        "profile:provision",
+        "provisioned sol-deep profile",
+        model=deep_model,
+        api_port=deep_port,
+    )
+
+
+def start_sol_deep_gateway() -> None:
+    """Bring the sol-deep profile's gateway up alongside the household default
+    (#332), the sol-deep twin of start_admin_gateway. Called AFTER the final
+    restart so it can't be wiped; tolerant + idempotent."""
+    if not hermes_gateway_start(SOL_DEEP_PROFILE):
+        jlog(
+            "warn",
+            "profile:gateway-start",
+            "sol-deep gateway not confirmed up — the Sol Gründlich mode + crons fall back to the household model until the next redeploy; check `hermes profile list` on the box",
+            profile=SOL_DEEP_PROFILE,
+        )
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # 5. THE SINGLE FINAL RESTART — POST /api/services/solilos/action {restart}.
 # ════════════════════════════════════════════════════════════════════════════
@@ -2535,6 +2662,7 @@ def main() -> int:
     host = env("HOST", "<server-ip>")
     api_port = env("HERMES_API_PORT", "8642")
     admin_api_port = env("HERMES_ADMIN_API_PORT", "8643")
+    deep_api_port = env("HERMES_DEEP_API_PORT", "8644")
     api_key = env("HERMES_API_KEY")
     # ServiceBay does NOT export the template variables into the post-deploy's
     # own environment, so read the rendered HERMES_LLM_PROVIDER_URL from the
@@ -2609,9 +2737,10 @@ def main() -> int:
     # read of the adjacent shipped SOUL.md never reached the box — #311).
     write_soul_md()
     mark_default_home_no_bundled_skills()
-    register_chronicle_cron()
-    register_problem_summarizer_cron()
-    register_chat_compactor_cron()
+    # The background crons are registered AFTER the sol-deep gateway is up (below),
+    # on that gateway (:8644) so they run on the 12b thorough model, not household
+    # fast e2b (#332). They can't be registered here — the sol-deep gateway isn't
+    # started until after the final restart.
     # Mirror the household MCP set into the global /opt/data/config.yaml too: the
     # config-agent panel (model switch) reads that file, and the `default`
     # profile uses it before `profile use household` takes effect. The
@@ -2633,10 +2762,17 @@ def main() -> int:
     # its bind port pinned via a per-profile `.env` (API_SERVER_PORT=:8643 — the
     # config.yaml port is overridden by the container env, box-verified #293).
     provision_profiles(data_dir, provider_url, admin_port=admin_api_port)
-    # Boot hook that keeps admin up across reboots (#299) — written via the
-    # container (hermes is up now, after wait_for_hermes) so it lands on the
-    # volume BEFORE the restart below recreates the pod with the hook mounted.
+    # The `sol-deep` profile (#332): the same Sol identity (soul + solilos skills,
+    # household empty MCP) on gemma4:12b, bound to :8644 — for the interactive "Sol
+    # Gründlich" chat mode + the background crons. NOT for household interactive
+    # chat (which stays on the fast e2b default).
+    provision_sol_deep_profile(provider_url, deep_port=deep_api_port)
+    # Boot hooks that keep the admin + sol-deep gateways up across reboots (#299) —
+    # written via the container (hermes is up now, after wait_for_hermes) so they
+    # land on the volume BEFORE the restart below recreates the pod with the hooks
+    # mounted.
     write_admin_gateway_boot_hook()
+    write_sol_deep_gateway_boot_hook()
 
     # ── 5. restart, THEN start the admin gateway ─────────────────────────────
     # The restart makes the container's bare `gateway run` serve the household
@@ -2650,6 +2786,15 @@ def main() -> int:
     time.sleep(5)
     wait_for_hermes()
     start_admin_gateway()
+    # Bring the sol-deep gateway up the same way, then register the background
+    # crons ON it (:8644) so they run on the 12b thorough model (#332). Jobs are
+    # per-gateway, and the gateway must be up to accept the registration POST, so
+    # both happen here at the end.
+    start_sol_deep_gateway()
+    deep_api_url = f"http://127.0.0.1:{deep_api_port}"
+    register_chronicle_cron(base_url=deep_api_url)
+    register_problem_summarizer_cron(base_url=deep_api_url)
+    register_chat_compactor_cron(base_url=deep_api_url)
 
     # Surface the API key for downstream wiring (MCP clients, operator scripts).
     if api_key:
