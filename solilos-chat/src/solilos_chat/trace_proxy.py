@@ -26,6 +26,7 @@ import aiohttp
 from aiohttp import web
 
 from solilos_chat.logging import log
+from solilos_chat.reasoning import THINK_SENTINEL
 
 UPSTREAM = os.environ.get("OLLAMA_UPSTREAM", "http://127.0.0.1:11434").rstrip("/")
 HOST = os.environ.get("TRACE_PROXY_HOST", "127.0.0.1")
@@ -37,6 +38,18 @@ DETAIL_RING = int(os.environ.get("TRACE_DETAIL_RING", "30"))
 # The LLM-call paths we summarise; everything else (GET /api/tags, /api/show,
 # embeddings, …) is forwarded transparently but not traced.
 CAPTURE_PATHS = ("/v1/chat/completions", "/api/chat")
+# Models whose hidden reasoning block is suppressed UNLESS the turn opts in.
+# Thinking is per-request only in this Ollama (no Modelfile/tag hook — verified)
+# and Hermes drops `reasoning_effort`, so the chat carries the Schnell/Thinking
+# dropdown choice as THINK_SENTINEL on the user text and this proxy — the one
+# hook on the Hermes→Ollama wire — enforces it: no sentinel ⇒ `reasoning_effort
+# =none` (suppress); sentinel ⇒ leave it to reason. The DECISION stays the
+# dropdown; the proxy only carries it. Configurable via CHAT_NOTHINK_MODELS.
+NOTHINK_MODELS = {
+    m.strip()
+    for m in os.environ.get("CHAT_NOTHINK_MODELS", "gemma4:e2b").split(",")
+    if m.strip()
+}
 
 _traces: deque[dict[str, Any]] = deque(maxlen=RING)
 # Full-content detail keyed by stable record id (insertion-ordered; FIFO-capped).
@@ -69,6 +82,61 @@ def extract_profile(messages: list[Any]) -> str | None:
             if match:
                 return match.group(1)
     return None
+
+
+def _content_has(content: Any, needle: str) -> bool:
+    if isinstance(content, str):
+        return needle in content
+    if isinstance(content, list):  # OpenAI multimodal parts
+        return any(
+            isinstance(p, dict)
+            and isinstance(p.get("text"), str)
+            and needle in p["text"]
+            for p in content
+        )
+    return False
+
+
+def _strip(content: Any, needle: str) -> Any:
+    if isinstance(content, str):
+        return content.replace(needle, "").rstrip()
+    if isinstance(content, list):
+        for p in content:
+            if isinstance(p, dict) and isinstance(p.get("text"), str):
+                p["text"] = p["text"].replace(needle, "").rstrip()
+    return content
+
+
+def apply_thinking_policy(body: bytes) -> bytes:
+    """Make the per-turn Schnell/Thinking dropdown choice drive the model. The
+    chat appends THINK_SENTINEL to a thinking turn's user text (the one signal
+    that survives Hermes onto the wire). For a no-think model: if the CURRENT
+    turn (the last user message) carries the sentinel, leave it to reason;
+    otherwise set `reasoning_effort=none` to suppress the hidden reasoning block.
+    Either way strip the sentinel from every message so Ollama never sees it.
+    Fail-open: any parse hiccup forwards the body unchanged."""
+    if not NOTHINK_MODELS:
+        return body
+    try:
+        d = json.loads(body)
+    except (ValueError, TypeError):
+        return body
+    if not isinstance(d, dict) or d.get("model") not in NOTHINK_MODELS:
+        return body
+    msgs = d.get("messages") or []
+    last_user = next((m for m in reversed(msgs) if m.get("role") == "user"), None)
+    wants_think = bool(
+        last_user and _content_has(last_user.get("content"), THINK_SENTINEL)
+    )
+    changed = False
+    for m in msgs:
+        if _content_has(m.get("content"), THINK_SENTINEL):
+            m["content"] = _strip(m.get("content"), THINK_SENTINEL)
+            changed = True
+    if not wants_think and d.get("reasoning_effort") in (None, ""):
+        d["reasoning_effort"] = "none"
+        changed = True
+    return json.dumps(d).encode() if changed else body
 
 
 def summarize_request(body: bytes) -> dict[str, Any]:
@@ -257,11 +325,17 @@ async def handle(request: web.Request) -> web.StreamResponse:
             return web.json_response(detail)
         return web.json_response(list(_traces)[::-1])  # newest first
 
-    body = await request.read()
+    body = apply_thinking_policy(await request.read())
     t0 = time.time()
     url = UPSTREAM + str(request.rel_url)
     captured = bytearray()
-    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
+    # Drop content-length: the thinking policy may have rewritten the body, so
+    # let the client recompute it from the (possibly new) length.
+    fwd_headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in ("host", "content-length")
+    }
     resp: web.StreamResponse | None = None
     try:
         async with aiohttp.ClientSession(auto_decompress=False) as sess:
