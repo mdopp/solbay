@@ -269,3 +269,86 @@ def test_provision_admin_env_overrides_model(pd, fc, monkeypatch):
         "  model: gemma4:custom-adm\n"
         in fc.files["/opt/data/profiles/admin/config.yaml"]
     )
+
+
+# ── sol-deep profile: Sol on 12b for the "Gründlich" mode + crons (#332) ─────
+
+
+@pytest.fixture
+def fc_deep(fc):
+    """The `fc` fixture plus the bind-mounted Sol (household) SOUL.md, so
+    provision_sol_deep_profile can read the Sol soul through the container."""
+    fc.files["/opt/data/skills/solilos/SOUL.md"] = (
+        TEMPLATES / "solilos" / "skills" / "household" / "SOUL.md"
+    ).read_text(encoding="utf-8")
+    return fc
+
+
+def test_provision_sol_deep_builds_sol_on_12b(pd, fc_deep):
+    pd.provision_sol_deep_profile(PROVIDER_URL, deep_port="8644")
+
+    # A lean (--no-skills) `sol-deep` profile with the shared `solilos` Sol pack
+    # symlinked in (the SAME identity as household, not the admin pack).
+    assert ("sol-deep", True) in fc_deep.created
+    assert ("sol-deep", "solilos") in fc_deep.linked
+
+    cfg = fc_deep.files["/opt/data/profiles/sol-deep/config.yaml"]
+    assert "  model: gemma4:12b\n" in cfg
+    # Household (empty) MCP set — NO servicebay control surface on this profile.
+    assert "servicebay_admin:" not in cfg
+    assert "servicebay-mcp:" not in cfg
+    assert "api_server" not in cfg  # port via .env, not config
+    # Bound to its own port via the per-profile .env (the only lever that works).
+    assert fc_deep.files["/opt/data/profiles/sol-deep/.env"] == "API_SERVER_PORT=8644\n"
+    # Gets the Sol soul (household identity), NOT the operator/admin soul.
+    soul = fc_deep.files["/opt/data/profiles/sol-deep/SOUL.md"]
+    assert "Solilos" in soul
+    assert "operator" not in soul.lower()
+
+
+def test_provision_sol_deep_env_overrides_model(pd, fc_deep, monkeypatch):
+    monkeypatch.setenv("SOL_DEEP_PROFILE_MODEL", "gemma4:custom-deep")
+    pd.provision_sol_deep_profile(PROVIDER_URL, deep_port="8644")
+    assert (
+        "  model: gemma4:custom-deep\n"
+        in fc_deep.files["/opt/data/profiles/sol-deep/config.yaml"]
+    )
+
+
+def test_crons_register_on_the_deep_gateway(pd, monkeypatch):
+    # The background crons (#332) are registered on the sol-deep gateway (:8644),
+    # NOT the household default, so they run on the 12b thorough model. Jobs are
+    # per-gateway, so the registration must address that gateway's base_url.
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_request(path, method="GET", payload=None, timeout=10.0, base_url=""):
+        calls.append((method, path, base_url))
+        # GET /api/jobs -> empty list (so the POST path runs); POST -> created.
+        return (200, []) if method == "GET" else (201, None)
+
+    monkeypatch.setattr(pd, "hermes_request_json", fake_request)
+    deep_url = "http://127.0.0.1:8644"
+    pd.register_chronicle_cron(base_url=deep_url)
+    pd.register_problem_summarizer_cron(base_url=deep_url)
+    pd.register_chat_compactor_cron(base_url=deep_url)
+
+    # Every job's GET-probe + POST went to the deep gateway, not :8642.
+    assert calls, "no cron registration calls made"
+    assert all(base == deep_url for _, _, base in calls)
+    posts = [c for c in calls if c[0] == "POST"]
+    assert len(posts) == 3  # all three jobs registered
+
+
+def test_sol_deep_boot_hook_forces_running_before_reconcile(pd, fc):
+    assert pd.write_sol_deep_gateway_boot_hook() is True
+    target = f"/opt/data/{pd.SOL_DEEP_GATEWAY_BOOT_HOOK}"
+    body = fc.files[target]
+    # Sorts before the image's 02-reconcile-profiles (and after the admin hook).
+    assert pd.SOL_DEEP_GATEWAY_BOOT_HOOK < "02-reconcile-profiles"
+    assert pd.ADMIN_GATEWAY_BOOT_HOOK < pd.SOL_DEEP_GATEWAY_BOOT_HOOK
+    # Targets the sol-deep gateway's recorded state and forces it to running.
+    assert "/opt/data/profiles/sol-deep/gateway_state.json" in body
+    assert '"gateway_state"] = "running"' in body
+    assert "s6-setuidgid hermes" in body
+    # Idempotent on a second run with the same content.
+    assert pd.write_sol_deep_gateway_boot_hook() is False
