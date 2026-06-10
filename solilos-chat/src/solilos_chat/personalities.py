@@ -73,6 +73,14 @@ DEFAULT_ID = "sol"
 # a static overlay here, so the lock can't be widened by editing this file.
 MAINTENANCE_ID = "servicebay-maintenance"
 
+# The "Sol Gründlich" persona (#332): the SAME Sol identity as the default, but
+# routed to the sol-deep Hermes gateway (12b thorough model) for an interactive
+# thorough turn. It carries NO overlay here — the gateway's profile supplies the
+# Sol soul, exactly like the default `sol` (an overlay would fight it). Selecting
+# it only switches the gateway (server-side, in gateway_for), not the prompt. Open
+# to every resident — NOT admin-gated like MAINTENANCE_ID.
+DEEP_ID = "sol-deep"
+
 
 def catalog() -> list[dict[str, str]]:
     """The browser-facing list (no system_prompt — that stays server-side)."""

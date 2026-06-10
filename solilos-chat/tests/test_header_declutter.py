@@ -149,6 +149,25 @@ def test_admin_dropdown_option_selects_admin_gateway():
     assert 'opt.textContent = "Admin";' in body
     # Appended only after BOTH the persona list and whoami (isAdmin) have loaded.
     assert (
-        "Promise.all([loadPersonalities(), loadWhoami()]).then(addAdminOption);"
-        in _HTML
+        "Promise.all([loadPersonalities(), loadWhoami()]).then(function () {" in _HTML
     )
+    assert "addAdminOption();" in _HTML
+
+
+def test_deep_dropdown_option_is_ungated_and_routes_to_deep():
+    # "Sol Gründlich" (#332): an UNGATED dropdown option (open to every resident,
+    # unlike the admin-gated Admin option) whose value packs the sol-deep persona
+    # id, so a new chat under it routes to the sol-deep (12b) gateway server-side.
+    assert 'var DEEP_PERSONA = "sol-deep";' in _HTML
+    assert "function addDeepOption()" in _HTML
+    add = re.search(r"function addDeepOption\(\) \{(.*?)\n      \}", _HTML, re.S)
+    assert add, "addDeepOption not found"
+    body = add.group(1)
+    # NOT admin-gated — no `if (!isAdmin) return;` guard.
+    assert "isAdmin" not in body
+    # The option value carries the sol-deep persona (parsePersonaSpeed +
+    # currentPersonality() send it as payload.personality → deep routing).
+    assert 'opt.value = DEEP_PERSONA + "|high";' in body
+    assert 'opt.textContent = "Sol Gründlich (12b)";' in body
+    # Appended in the same post-load chain as the Admin option.
+    assert "addDeepOption();" in _HTML

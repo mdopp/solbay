@@ -212,6 +212,7 @@ def build_app(
     *,
     hermes: HermesClient,
     hermes_admin: HermesClient | None = None,
+    hermes_deep: HermesClient | None = None,
     remote_user_header: str,
     default_uid: str,
     remote_groups_header: str = "Remote-Groups",
@@ -258,12 +259,20 @@ def build_app(
     # instance / offline-test topology).
     household_gw = hermes
     admin_gw = hermes_admin or hermes
+    deep_gw = hermes_deep or hermes
     admin_sessions: set[str] = set()
+    deep_sessions: set[str] = set()
 
     def gateway_for(
         request: web.Request, session_id: str, persona: object = None
     ) -> HermesClient:
-        """Pick the Hermes gateway for a turn (#293).
+        """Pick the Hermes gateway for a turn (#293/#332).
+
+        sol-deep ("Sol Gründlich", 12b) when the session was created on it or the
+        request selects the sol-deep persona — open to every resident, NO admin
+        gate (it's the same Sol soul, just the thorough model). Sessions are
+        gateway-pinned (Hermes session state is per-gateway), so the recorded set
+        keeps follow-up turns on the same instance.
 
         Admin gateway only when the caller is an Authelia admin AND either the
         session was created on the admin gateway (recorded at create) or this
@@ -271,11 +280,13 @@ def build_app(
         caller is ALWAYS routed to household — even if it presents a known admin
         session_id — so the #209/#229 gate holds at the routing layer too.
         """
+        sel = request.rel_url.query.get("persona") or persona
+        if (session_id and session_id in deep_sessions) or sel == personalities.DEEP_ID:
+            return deep_gw
         if not is_admin(request, remote_groups_header, admin_group):
             return household_gw
         if session_id and session_id in admin_sessions:
             return admin_gw
-        sel = request.rel_url.query.get("persona") or persona
         if sel == personalities.MAINTENANCE_ID:
             return admin_gw
         return household_gw
@@ -372,6 +383,8 @@ def build_app(
         session_id = await client.create_session(uid, title=_title_from(text))
         if client is admin_gw and client is not household_gw:
             admin_sessions.add(session_id)
+        elif client is deep_gw and client is not household_gw:
+            deep_sessions.add(session_id)
         log.info(
             "chat.session.created",
             uid=uid,
@@ -1528,6 +1541,7 @@ async def serve(
     *,
     hermes: HermesClient,
     hermes_admin: HermesClient | None = None,
+    hermes_deep: HermesClient | None = None,
     remote_user_header: str,
     default_uid: str,
     remote_groups_header: str = "Remote-Groups",
@@ -1552,6 +1566,7 @@ async def serve(
     app = build_app(
         hermes=hermes,
         hermes_admin=hermes_admin,
+        hermes_deep=hermes_deep,
         remote_user_header=remote_user_header,
         default_uid=default_uid,
         remote_groups_header=remote_groups_header,
