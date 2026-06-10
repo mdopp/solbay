@@ -37,6 +37,18 @@ DETAIL_RING = int(os.environ.get("TRACE_DETAIL_RING", "30"))
 # The LLM-call paths we summarise; everything else (GET /api/tags, /api/show,
 # embeddings, …) is forwarded transparently but not traced.
 CAPTURE_PATHS = ("/v1/chat/completions", "/api/chat")
+# Models that must NOT think. Thinking is per-request only in this Ollama (no
+# Modelfile/tag hook — verified), and Hermes sends no thinking control, so the
+# fast model burns ~2-4s/turn on a hidden reasoning block we never surface. This
+# proxy is the one hook on the Hermes→Ollama wire: enforce `reasoning_effort=none`
+# (the knob Ollama's /v1 honors) for the fast model. The decision stays the
+# model choice (reasoning.py): the thorough model is absent here and keeps
+# thinking. Configurable via CHAT_NOTHINK_MODELS.
+NOTHINK_MODELS = {
+    m.strip()
+    for m in os.environ.get("CHAT_NOTHINK_MODELS", "gemma4:e2b").split(",")
+    if m.strip()
+}
 
 _traces: deque[dict[str, Any]] = deque(maxlen=RING)
 # Full-content detail keyed by stable record id (insertion-ordered; FIFO-capped).
@@ -69,6 +81,28 @@ def extract_profile(messages: list[Any]) -> str | None:
             if match:
                 return match.group(1)
     return None
+
+
+def apply_thinking_policy(body: bytes) -> bytes:
+    """Set `reasoning_effort=none` for a no-think model so it skips its hidden
+    reasoning block — the dominant per-turn latency. Enforced here because
+    Ollama has no model-tag thinking switch and Hermes sends no thinking control.
+    Only touches a request whose `model` is in NOTHINK_MODELS and that hasn't
+    already set the field (an explicit caller choice wins). Re-serialising the
+    JSON leaves the prompt tokens unchanged, so the KV prefix cache still hits.
+    Fail-open: any parse hiccup forwards the body unchanged."""
+    if not NOTHINK_MODELS:
+        return body
+    try:
+        d = json.loads(body)
+    except (ValueError, TypeError):
+        return body
+    if not isinstance(d, dict) or d.get("model") not in NOTHINK_MODELS:
+        return body
+    if d.get("reasoning_effort") not in (None, ""):
+        return body
+    d["reasoning_effort"] = "none"
+    return json.dumps(d).encode()
 
 
 def summarize_request(body: bytes) -> dict[str, Any]:
@@ -257,11 +291,17 @@ async def handle(request: web.Request) -> web.StreamResponse:
             return web.json_response(detail)
         return web.json_response(list(_traces)[::-1])  # newest first
 
-    body = await request.read()
+    body = apply_thinking_policy(await request.read())
     t0 = time.time()
     url = UPSTREAM + str(request.rel_url)
     captured = bytearray()
-    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
+    # Drop content-length: the thinking policy may have rewritten the body, so
+    # let the client recompute it from the (possibly new) length.
+    fwd_headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in ("host", "content-length")
+    }
     resp: web.StreamResponse | None = None
     try:
         async with aiohttp.ClientSession(auto_decompress=False) as sess:

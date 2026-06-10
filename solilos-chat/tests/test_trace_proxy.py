@@ -82,6 +82,27 @@ def test_summarize_request_carries_profile():
     assert rec["profile"] == "admin"
 
 
+def test_thinking_policy_disables_reasoning_for_fast_model(monkeypatch):
+    monkeypatch.setattr(tp, "NOTHINK_MODELS", {"gemma4:e2b"})
+    out = tp.apply_thinking_policy(
+        json.dumps({"model": "gemma4:e2b", "messages": []}).encode()
+    )
+    assert json.loads(out)["reasoning_effort"] == "none"
+
+
+def test_thinking_policy_leaves_thorough_model_and_explicit_choice(monkeypatch):
+    monkeypatch.setattr(tp, "NOTHINK_MODELS", {"gemma4:e2b"})
+    thorough = json.dumps({"model": "gemma4:12b", "messages": []}).encode()
+    assert tp.apply_thinking_policy(thorough) == thorough
+    explicit = json.dumps({"model": "gemma4:e2b", "reasoning_effort": "high"}).encode()
+    assert json.loads(tp.apply_thinking_policy(explicit))["reasoning_effort"] == "high"
+
+
+def test_thinking_policy_fails_open_on_non_json(monkeypatch):
+    monkeypatch.setattr(tp, "NOTHINK_MODELS", {"gemma4:e2b"})
+    assert tp.apply_thinking_policy(b"not json") == b"not json"
+
+
 def test_summarize_response_json_tool_call():
     body = json.dumps(
         {
