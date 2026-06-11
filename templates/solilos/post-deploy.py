@@ -759,6 +759,59 @@ def write_gateway_env(data_dir: str, entries: dict[str, str]) -> bool:
     return True
 
 
+def write_engine_soul(data_dir: str) -> bool:
+    """Seed/sync the Sol Engine's SOUL.md on the chat-owned solbay volume.
+
+    The engine reads the soul from `<data_dir>/solbay/SOUL.md` (the Hermes
+    data dir is 0700/foreign-subuid, unreadable from the chat container) and
+    the panel writes it directly. Same #283 guard as the hermes-side install:
+    an operator-edited file is never clobbered; an unmodified shipped soul is
+    updated when the pack ships a new one. Pure host-side file IO — both
+    paths are core-owned. Returns True when the file was written."""
+    source = os.path.join(data_dir, "solilos", "skills", "household", "SOUL.md")
+    target = os.path.join(data_dir, "solbay", "SOUL.md")
+    marker = os.path.join(data_dir, "solbay", ".soul.shipped.sha256")
+    try:
+        with open(source, encoding="utf-8") as f:
+            soul = f.read()
+    except OSError:
+        jlog("warn", "chat:soul", "shipped SOUL.md not readable", source=source)
+        return False
+    existing = ""
+    try:
+        with open(target, encoding="utf-8") as f:
+            existing = f.read()
+    except OSError:
+        pass
+    if existing == soul:
+        return False
+    recorded = ""
+    try:
+        with open(marker, encoding="utf-8") as f:
+            recorded = f.read().strip()
+    except OSError:
+        pass
+    if existing.strip() and recorded and recorded != _soul_sha256(existing):
+        jlog(
+            "info",
+            "chat:soul",
+            "leaving operator-edited engine SOUL.md untouched",
+            path=target,
+        )
+        return False
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(soul)
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write(_soul_sha256(soul) + "\n")
+    except OSError as e:
+        jlog("error", "chat:soul", "could not write engine SOUL.md", error=str(e))
+        return False
+    jlog("info", "chat:soul", "installed engine SOUL.md", path=target)
+    return True
+
+
 def write_ddgs_install_script(data_dir: str) -> bool:
     """Write the startup script to <DATA_DIR>/hermes/99-install-ddgs (mounted at
     /etc/cont-init.d/99-install-ddgs) so the ddgs package installs on container
@@ -2723,6 +2776,9 @@ def main() -> int:
     )
 
     write_ddgs_install_script(data_dir)
+
+    # Sol Engine soul on the chat-owned volume (host-side, no container needed).
+    write_engine_soul(data_dir)
 
     # ── 2. chat phase ────────────────────────────────────────────────────────
     # decommission's data_dir default differed (`/mnt/data/stacks`); the merged

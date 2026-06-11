@@ -1892,15 +1892,14 @@ async def test_skills_endpoints(aiohttp_client, tmp_path):
 # --- Soul -----------------------------------------------------------------
 
 
-async def test_soul_endpoint_reads_via_agent(aiohttp_client, monkeypatch):
-    from solilos_chat import server as server_mod
-
-    async def fake_get(url, token):
-        return "# Sol\nI am the soul."
-
-    monkeypatch.setattr(server_mod, "_agent_get_soul", fake_get)
+async def test_soul_endpoint_reads_file(aiohttp_client, tmp_path):
+    soul = tmp_path / "SOUL.md"
+    soul.write_text("# Sol\nI am the soul.", encoding="utf-8")
     app = build_app(
-        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        soul_path=str(soul),
     )
     client = await aiohttp_client(app)
     resp = await client.get("/api/soul")
@@ -1909,15 +1908,12 @@ async def test_soul_endpoint_reads_via_agent(aiohttp_client, monkeypatch):
     assert body["soul"]["content"] == "# Sol\nI am the soul."
 
 
-async def test_soul_endpoint_agent_unavailable(aiohttp_client, monkeypatch):
-    from solilos_chat import server as server_mod
-
-    async def fake_get(url, token):
-        return None
-
-    monkeypatch.setattr(server_mod, "_agent_get_soul", fake_get)
+async def test_soul_endpoint_missing_file_is_502(aiohttp_client, tmp_path):
     app = build_app(
-        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        soul_path=str(tmp_path / "missing" / "SOUL.md"),
     )
     client = await aiohttp_client(app)
     resp = await client.get("/api/soul")
@@ -1946,25 +1942,17 @@ async def test_whoami_reports_context_window(aiohttp_client):
     assert body["context_window"] == 4096
 
 
-# --- Soul edit (admin, proxied to the config sidecar) ---------------------
+# --- Soul edit (admin, direct file write on the chat-owned volume) --------
 
 
-async def test_put_soul_admin_proxies_to_agent(aiohttp_client, monkeypatch):
-    from solilos_chat import server as server_mod
-
-    calls = []
-
-    async def fake_agent(url, token, content):
-        calls.append((url, token, content))
-        return True
-
-    monkeypatch.setattr(server_mod, "_agent_put_soul", fake_agent)
+async def test_put_soul_admin_writes_file(aiohttp_client, tmp_path):
+    soul = tmp_path / "SOUL.md"
+    soul.write_text("# Sol\nold", encoding="utf-8")
     app = build_app(
         hermes=_FakeHermes(),
         remote_user_header="Remote-User",
         default_uid="household",
-        config_agent_url="http://agent:8650",
-        agent_token="k",
+        soul_path=str(soul),
     )
     client = await aiohttp_client(app)
 
@@ -1972,21 +1960,17 @@ async def test_put_soul_admin_proxies_to_agent(aiohttp_client, monkeypatch):
         "/api/soul", json={"content": "# Sol\nnew"}, headers={"Remote-Groups": "admins"}
     )
     assert resp.status == 200
-    assert calls == [("http://agent:8650", "k", "# Sol\nnew")]
+    assert soul.read_text(encoding="utf-8") == "# Sol\nnew"
 
 
-async def test_put_soul_non_admin_forbidden_no_agent_call(aiohttp_client, monkeypatch):
-    from solilos_chat import server as server_mod
-
-    called = []
-
-    async def fake_agent(url, token, content):
-        called.append(1)
-        return True
-
-    monkeypatch.setattr(server_mod, "_agent_put_soul", fake_agent)
+async def test_put_soul_non_admin_forbidden_no_write(aiohttp_client, tmp_path):
+    soul = tmp_path / "SOUL.md"
+    soul.write_text("# Sol\nold", encoding="utf-8")
     app = build_app(
-        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        soul_path=str(soul),
     )
     client = await aiohttp_client(app)
 
@@ -1994,7 +1978,7 @@ async def test_put_soul_non_admin_forbidden_no_agent_call(aiohttp_client, monkey
         "/api/soul", json={"content": "x"}, headers={"Remote-Groups": "family"}
     )
     assert resp.status == 403
-    assert called == []  # the write never reached the agent
+    assert soul.read_text(encoding="utf-8") == "# Sol\nold"  # untouched
 
 
 async def test_put_soul_empty_rejected(aiohttp_client):
@@ -2008,15 +1992,12 @@ async def test_put_soul_empty_rejected(aiohttp_client):
     assert resp.status == 400
 
 
-async def test_put_soul_agent_failure_is_502(aiohttp_client, monkeypatch):
-    from solilos_chat import server as server_mod
-
-    async def fake_agent(url, token, content):
-        return False
-
-    monkeypatch.setattr(server_mod, "_agent_put_soul", fake_agent)
+async def test_put_soul_unwritable_path_is_502(aiohttp_client, tmp_path):
     app = build_app(
-        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        soul_path=str(tmp_path / "missing" / "SOUL.md"),
     )
     client = await aiohttp_client(app)
     resp = await client.put(

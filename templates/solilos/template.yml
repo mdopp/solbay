@@ -424,11 +424,12 @@ spec:
       value: "{{HASS_URL}}"
     - name: HASS_TOKEN
       value: "{{HASS_TOKEN}}"
-    # Souls for the engine's prompt assembly: the household soul (read fresh
-    # per turn, mtime-cached — an edit lands on the next turn) and the
-    # operator soul for the admin profile.
+    # Souls for the engine's prompt assembly: the household soul lives on the
+    # chat-owned solilos-data volume (the Hermes data dir is 0700/foreign-subuid
+    # and unreadable here; post-deploy seeds/moves the file). Read fresh per
+    # turn, mtime-cached — a panel edit lands on the next turn, no restart.
     - name: SOUL_PATH
-      value: "/data/hermes/SOUL.md"
+      value: "/var/lib/solilos/SOUL.md"
     - name: ADMIN_SOUL_PATH
       value: "/data/admin-soul/SOUL.md"
     # No `ports:` block — hostNetwork pod, the listener binds the host
@@ -449,11 +450,8 @@ spec:
       name: solilos-data
     - mountPath: /opt/data/notes
       name: solilos-notes
-    # Souls for the Sol Engine (read-only — the panel writes through the
-    # config sidecar as before).
-    - mountPath: /data/hermes
-      name: hermes-data
-      readOnly: true
+    # Operator soul for the engine's admin profile (read-only; the household
+    # soul rides the solilos-data volume already mounted above).
     - mountPath: /data/admin-soul
       name: admin-soul-skills
       readOnly: true

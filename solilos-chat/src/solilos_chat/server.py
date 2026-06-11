@@ -744,13 +744,14 @@ def build_app(
         )
 
     async def get_soul(_request: web.Request) -> web.Response:
-        # Read through the sidecar (single source of truth), not a local
-        # mount: the agent's atomic writes swap the file inode, which a
-        # single-file bind mount in this pod wouldn't track (stale reads).
-        content = await _agent_get_soul(config_agent_url, agent_token)
-        if content is None:
+        # The soul lives on the chat-owned data volume now (Sol Engine reads
+        # it per turn), so the panel reads the file directly — the Hermes-era
+        # config-sidecar hop is gone.
+        try:
+            content = Path(soul_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
             return web.json_response(
-                {"ok": False, "reason": "agent_unavailable"}, status=502
+                {"ok": False, "reason": "soul_unavailable"}, status=502
             )
         return web.json_response({"ok": True, "soul": {"content": content}})
 
@@ -768,12 +769,16 @@ def build_app(
             return web.json_response(
                 {"ok": False, "reason": "empty_content"}, status=400
             )
-        # The chat pod can't write Hermes' data dir; the privileged sidecar
-        # in the hermes pod does it. SOUL.md reloads live, so no restart.
-        ok = await _agent_put_soul(config_agent_url, agent_token, content)
-        if not ok:
+        # Atomic write on the chat-owned volume: the engine's mtime cache
+        # picks the edit up on the next turn, so it is live without restart.
+        try:
+            tmp = Path(soul_path).with_suffix(".tmp")
+            tmp.write_text(content, encoding="utf-8")
+            tmp.replace(soul_path)
+        except OSError as e:
+            log.error("chat.soul.write_failed", error=str(e))
             return web.json_response(
-                {"ok": False, "reason": "agent_unavailable"}, status=502
+                {"ok": False, "reason": "soul_unavailable"}, status=502
             )
         log.info(
             "chat.soul.edited",
