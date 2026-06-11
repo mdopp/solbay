@@ -353,10 +353,10 @@ def render_gpu_container_unit(port: str, data_dir: str) -> str:
     reaches the GPU runtime, so anything required on the box has to be
     rendered here too). Kept pure so the needs-rewrite comparison and the
     write share one source of truth."""
-    context_length = env("OLLAMA_CONTEXT_LENGTH", "131072")
+    context_length = env("OLLAMA_CONTEXT_LENGTH", "32768")
     keep_alive = env("OLLAMA_KEEP_ALIVE", "24h")
     flash_attention = env("OLLAMA_FLASH_ATTENTION", "1")
-    max_loaded_models = env("OLLAMA_MAX_LOADED_MODELS", "2")
+    max_loaded_models = env("OLLAMA_MAX_LOADED_MODELS", "3")
     return (
         "[Unit]\n"
         "Description=Ollama (Local LLM Server, GPU passthrough #1026 fixup)\n"
@@ -374,15 +374,16 @@ def render_gpu_container_unit(port: str, data_dir: str) -> str:
         f"Environment=OLLAMA_CONTEXT_LENGTH={context_length}\n"
         "# Keep a model loaded after its last request so a conversational\n"
         "# pause — or an overnight gap — doesn't pay a cold model reload next\n"
-        "# turn (stock 5m evicts too soon). 24h (#268): with\n"
-        "# MAX_LOADED_MODELS=1 the old co-residency concern that capped this\n"
-        "# at 60m is gone.\n"
+        "# turn (stock 5m evicts too soon, #268). At the 32k window all three\n"
+        "# resident models fit with headroom, so 24h pinning carries no OOM\n"
+        "# risk.\n"
         f"Environment=OLLAMA_KEEP_ALIVE={keep_alive}\n"
-        "# Keep BOTH the chat model and the embed model resident (default 2).\n"
-        "# Box-measured 2026-06-10: this cap is GLOBAL — the embed model IS\n"
-        "# counted, so at 1 every embedding evicts the chat model and the next\n"
-        "# turn pays a ~6.75s reload + ~2.6s cold prefill (the #268 'separate\n"
-        "# uncounted runner' assumption was wrong).\n"
+        "# Keep ALL THREE models resident (default 3): fast chat (e2b),\n"
+        "# thorough chat (12b) and the embed model. The cap is GLOBAL — the\n"
+        "# embed model IS counted (box-measured 2026-06-10), and at 2 the\n"
+        "# night crons on 12b plus an embedding evicted e2b, so the first\n"
+        "# fast turn of the morning paid a ~6.75s reload (box-observed\n"
+        "# 2026-06-11).\n"
         f"Environment=OLLAMA_MAX_LOADED_MODELS={max_loaded_models}\n"
         "# Flash attention — negligible speed change here but harmless and\n"
         "# the prerequisite for optional KV-cache quant.\n"
