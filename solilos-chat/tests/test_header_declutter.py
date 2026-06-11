@@ -28,13 +28,14 @@ def test_separate_reasoning_control_is_gone():
     assert 'id="personality"' in _HTML
 
 
-def test_dropdown_is_fast_only():
-    # The household runs one model at one strength: fast. Personas are no longer
-    # crossed with a speed — the only speed is fast (reasoning none). Thinking +
-    # 12b are reserved for other tasks (the Admin option below).
-    assert '[{ suffix: "", reasoning: "none" }]' in _HTML
-    assert '{ suffix: "Thinking", reasoning: "high" }' not in _HTML
+def test_dropdown_crosses_persona_with_speed():
+    # Each persona is crossed with a speed: schnell (reasoning none) and Thinking
+    # (reasoning high). The model the chat runs on follows the admin Model
+    # setting; the household chat hides this control and is always Sol/schnell.
+    assert '{ suffix: "schnell", reasoning: "none" }' in _HTML
+    assert '{ suffix: "Thinking", reasoning: "high" }' in _HTML
     assert 'opt.value = p.id + "|" + sp.reasoning;' in _HTML
+    assert 'opt.textContent = p.label + " · " + sp.suffix;' in _HTML
 
 
 def test_selection_maps_back_to_persona_and_reasoning():
@@ -154,20 +155,11 @@ def test_admin_dropdown_option_selects_admin_gateway():
     assert "addAdminOption();" in _HTML
 
 
-def test_deep_dropdown_option_is_ungated_and_routes_to_deep():
-    # "Sol Gründlich" (#332): an UNGATED dropdown option (open to every resident,
-    # unlike the admin-gated Admin option) whose value packs the sol-deep persona
-    # id, so a new chat under it routes to the sol-deep (12b) gateway server-side.
-    assert 'var DEEP_PERSONA = "sol-deep";' in _HTML
-    assert "function addDeepOption()" in _HTML
-    add = re.search(r"function addDeepOption\(\) \{(.*?)\n      \}", _HTML, re.S)
-    assert add, "addDeepOption not found"
-    body = add.group(1)
-    # NOT admin-gated — no `if (!isAdmin) return;` guard.
-    assert "isAdmin" not in body
-    # The option value carries the sol-deep persona (parsePersonaSpeed +
-    # currentPersonality() send it as payload.personality → deep routing).
-    assert 'opt.value = DEEP_PERSONA + "|high";' in body
-    assert 'opt.textContent = "Sol Gründlich (12b)";' in body
-    # Appended in the same post-load chain as the Admin option.
-    assert "addDeepOption();" in _HTML
+def test_standalone_deep_dropdown_option_is_removed():
+    # The separate "Sol Gründlich (12b)" persona option is gone: the 12b thorough
+    # model is now governed by the admin Model setting (Schnell/Gründlich), and
+    # "Sol · Thinking" with Model = Gründlich reaches the sol-deep gateway. One
+    # control for the model, one for persona × speed.
+    assert "function addDeepOption" not in _HTML
+    assert "addDeepOption();" not in _HTML
+    assert "Sol Gründlich (12b)" not in _HTML

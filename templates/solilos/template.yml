@@ -417,6 +417,21 @@ spec:
     # correlate them to a per-message trace_id and persist the trace (#306).
     - name: TRACE_PROXY_URL
       value: "http://127.0.0.1:{{TRACE_PROXY_PORT}}"
+    # Sol Engine (Hermes replacement): the chat server runs the agent loop
+    # itself — direct HA access for the device tools + the prompt-injected
+    # entity registry. Same long-lived token the hermes container held.
+    - name: HASS_URL
+      value: "{{HASS_URL}}"
+    - name: HASS_TOKEN
+      value: "{{HASS_TOKEN}}"
+    # Souls for the engine's prompt assembly: the household soul lives on the
+    # chat-owned solilos-data volume (the Hermes data dir is 0700/foreign-subuid
+    # and unreadable here; post-deploy seeds/moves the file). Read fresh per
+    # turn, mtime-cached — a panel edit lands on the next turn, no restart.
+    - name: SOUL_PATH
+      value: "/var/lib/solilos/SOUL.md"
+    - name: ADMIN_SOUL_PATH
+      value: "/data/admin-soul/SOUL.md"
     # No `ports:` block — hostNetwork pod, the listener binds the host
     # directly (loopback:{{HERMES_CHAT_PORT}}); a ports mapping alongside
     # hostNetwork makes `podman kube play` reject the spec (same constraint
@@ -435,6 +450,11 @@ spec:
       name: solilos-data
     - mountPath: /opt/data/notes
       name: solilos-notes
+    # Operator soul for the engine's admin profile (read-only; the household
+    # soul rides the solilos-data volume already mounted above).
+    - mountPath: /data/admin-soul
+      name: admin-soul-skills
+      readOnly: true
 
   # trace — the ALWAYS-ON Ollama trace proxy (permanent LLM traceability).
   # Hermes' providers.ollama.api (HERMES_LLM_PROVIDER_URL) points at this on

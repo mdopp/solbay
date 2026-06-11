@@ -1,3 +1,7 @@
+## v7
+
+- **Residency fix (Sol Engine Phase 0)**: `OLLAMA_MAX_LOADED_MODELS` default raised `2 → 3` and `OLLAMA_CONTEXT_LENGTH` default lowered `131072 → 32768`. Box-observed 2026-06-11: at `2`, the night crons on gemma4:12b plus embeddings left ONLY 12b loaded — the first fast (gemma4:e2b) turn of the morning paid the ~6.75s reload + cold prefill. The household stack runs three models (e2b fast chat, 12b thorough chat, nomic embed) and all must stay warm. The 131072 window existed only because the Hermes-era base prompt had grown to ~25k tokens; with the lean Sol Engine prompt (≤3k) a 32k window leaves ~29k conversation room (auto-compaction at 90%) and shrinks gemma4:12b from ≈10.3 GB to ≈8.95 GB (#214) — that KV saving is what makes the trio (≈12 GB) co-resident on the 16 GB GPU.
+
 ## v6
 
 - **Eviction fix**: `OLLAMA_MAX_LOADED_MODELS` default raised `1 → 2`. Box-measured 2026-06-10: the v5 assumption that the embed model runs in a separate runner "not counted against this chat-model slot" was **wrong** — the cap is GLOBAL. At `1`, any embedding (notes/memory/search uses `nomic-embed-text`) evicts `gemma4:e2b`, and the next chat turn pays a **~6.75s model reload + ~2.6s cold prefill (~9.4s turns)**. `2` keeps gemma4:e2b (~2.15 GB) + nomic (~0.3 GB) co-resident — trivial on the 16 GB GPU. The v5 chat↔chat concern only applies if a second *chat* model (gemma4:12b) must also stay warm → then use `3`.

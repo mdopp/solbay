@@ -28,12 +28,14 @@ from solilos_chat import (
     notes_search,
     personalities,
     reasoning,
+    settings_store,
     skills,
     topics_store,
     trace_store,
 )
 from solilos_chat.attachments import AttachmentStore, attach_to_messages
 from solilos_chat.context import STATIC_DEFAULT, ContextWindow
+from solilos_chat.engine.client import EngineError
 from solilos_chat.hermes import HermesClient, HermesError, _answer_from_messages
 from solilos_chat.logging import log
 
@@ -60,6 +62,12 @@ _EPHEMERAL_HINT = (
 
 
 _LOCAL_TZ = ZoneInfo("Europe/Berlin")
+
+# The built-in household topic slug (mirrors the frontend `HOUSEHOLD_TOPIC`). A
+# chat whose primary topic is this is the pinned "Zuhause" household chat: it is
+# pinned to the fast e2b household gateway and never offers thinking, regardless
+# of the everyday-chat model preference.
+HOUSEHOLD_TOPIC = "household"
 
 
 def _now_hint() -> str:
@@ -231,6 +239,7 @@ def build_app(
     solilos_db_path: str = "/var/lib/solilos/solilos.db",
     notes_dir: str = "/opt/data/notes",
     trace_proxy_url: str = "http://127.0.0.1:11436",
+    trace_recorder: Any = None,
     residents: list[str] | None = None,
 ) -> web.Application:
     # Known resident uids feeding the `@person` autosuggest seed (#279), beyond
@@ -262,34 +271,67 @@ def build_app(
     deep_gw = hermes_deep or hermes
     admin_sessions: set[str] = set()
     deep_sessions: set[str] = set()
+    # Sessions pinned to the household (fast e2b) gateway — the pinned "Zuhause"
+    # chat. Populated at create (like deep_sessions); the persisted primary topic
+    # is the restart-survival source of truth, this set is just the fast path.
+    household_sessions: set[str] = set()
+
+    # The everyday-chat model preference (#332-followup): "fast" (e2b household
+    # gateway) or "thorough" (12b sol-deep gateway). Cached in memory; the JSON
+    # sidecar beside solilos.db survives restarts. Household chats ignore it.
+    other_model_pref = settings_store.get_other_model_pref(solilos_db_path)
+
+    def is_household_chat(uid: str, session_id: str, topic_slug: str) -> bool:
+        """True when this turn belongs to the pinned household chat — by the
+        first-turn topic, the fast-path set, or the persisted primary topic."""
+        if topic_slug == HOUSEHOLD_TOPIC:
+            return True
+        if session_id and session_id in household_sessions:
+            return True
+        if session_id:
+            assigned = topics_store.get_session_topics(solilos_db_path, session_id, uid)
+            return assigned.get("primary") == HOUSEHOLD_TOPIC
+        return False
 
     def gateway_for(
-        request: web.Request, session_id: str, persona: object = None
+        request: web.Request,
+        session_id: str,
+        persona: object = None,
+        *,
+        uid: str = "",
+        topic_slug: str = "",
     ) -> HermesClient:
-        """Pick the Hermes gateway for a turn (#293/#332).
+        """Pick the Hermes gateway for a turn (#293/#332/#332-followup).
 
-        sol-deep ("Sol Gründlich", 12b) when the session was created on it or the
-        request selects the sol-deep persona — open to every resident, NO admin
-        gate (it's the same Sol soul, just the thorough model). Sessions are
-        gateway-pinned (Hermes session state is per-gateway), so the recorded set
-        keeps follow-up turns on the same instance.
+        The pinned household ("Zuhause") chat is ALWAYS the fast e2b household
+        gateway, regardless of the everyday-chat model preference — it is the
+        one chat pinned to one model at one strength.
+
+        Every OTHER chat follows the everyday-chat model preference (the Model
+        setting): "thorough" routes to the sol-deep gateway (12b), "fast" to the
+        household gateway (e2b). Both carry the same Sol soul; the model is fixed
+        by which gateway the turn lands on (a per-session override is ignored,
+        #293). An explicit sol-deep persona / recorded deep session also routes
+        to 12b.
 
         Admin gateway only when the caller is an Authelia admin AND either the
         session was created on the admin gateway (recorded at create) or this
         request explicitly selects the admin/maintenance persona. A non-admin
-        caller is ALWAYS routed to household — even if it presents a known admin
-        session_id — so the #209/#229 gate holds at the routing layer too.
+        caller is ALWAYS routed off the admin gateway — even if it presents a
+        known admin session_id — so the #209/#229 gate holds at the routing
+        layer too.
         """
+        if is_household_chat(uid, session_id, topic_slug):
+            return household_gw
         sel = request.rel_url.query.get("persona") or persona
+        if is_admin(request, remote_groups_header, admin_group):
+            if session_id and session_id in admin_sessions:
+                return admin_gw
+            if sel == personalities.MAINTENANCE_ID:
+                return admin_gw
         if (session_id and session_id in deep_sessions) or sel == personalities.DEEP_ID:
             return deep_gw
-        if not is_admin(request, remote_groups_header, admin_group):
-            return household_gw
-        if session_id and session_id in admin_sessions:
-            return admin_gw
-        if sel == personalities.MAINTENANCE_ID:
-            return admin_gw
-        return household_gw
+        return deep_gw if other_model_pref == "thorough" else household_gw
 
     async def maybe_compact(
         uid: str, session_id: str, client: HermesClient
@@ -315,7 +357,7 @@ def build_app(
                 context_window=context_window.value,
                 threshold=compaction_threshold,
             )
-        except HermesError:
+        except (HermesError, EngineError):
             return session_id, False
         if new_id:
             return new_id, True
@@ -381,6 +423,8 @@ def build_app(
         # bare-marker stub already holding it — the same collision #267 fixed
         # for the compaction path, here on the main first-turn path (#277).
         session_id = await client.create_session(uid, title=_title_from(text))
+        if primary == HOUSEHOLD_TOPIC:
+            household_sessions.add(session_id)
         if client is admin_gw and client is not household_gw:
             admin_sessions.add(session_id)
         elif client is deep_gw and client is not household_gw:
@@ -461,7 +505,25 @@ def build_app(
         if ephemeral:
             return
         try:
-            steps = await fetch_turn_steps(t0)
+            if trace_recorder is not None:
+                # Native engine tracing: records carry the session id, so the
+                # turn's steps are an exact filter — no time-window guessing.
+                steps = [
+                    {
+                        "model": rec.get("model"),
+                        "profile": rec.get("profile"),
+                        "wall_s": rec.get("wall_s"),
+                        "prompt_tokens": rec.get("prompt_tokens"),
+                        "completion_tokens": rec.get("completion_tokens"),
+                        "context_free": rec.get("context_free"),
+                        "finish_reason": rec.get("finish_reason"),
+                        "n_tools": rec.get("n_tools"),
+                        "detail_id": rec.get("id"),
+                    }
+                    for rec in trace_recorder.for_session(session_id, t0)
+                ]
+            else:
+                steps = await fetch_turn_steps(t0)
             if steps:
                 trace_store.persist_trace(
                     solilos_db_path, session_id, uuid.uuid4().hex, uid, steps
@@ -512,11 +574,19 @@ def build_app(
         return web.json_response({"ok": True, "steps": steps})
 
     async def trace_detail(request: web.Request) -> web.Response:
-        # Exact per-call content for one trace step (#307 panel → #305 detail):
-        # the browser can't reach the proxy port directly, so the chat server
-        # passes its `/__traces__/<id>` through. The detail store is the proxy's
-        # FIFO ring, so an old turn may 404 — the panel degrades to no modal.
+        # Exact per-call content for one trace step (#307 panel → #305 detail).
+        # Native engine tracing serves the detail in-process; the HTTP pass-
+        # through remains for the Hermes-era proxy topology. Either way the
+        # detail store is a FIFO ring, so an old turn may 404 — the panel
+        # degrades to no modal.
         detail_id = request.match_info["detail_id"]
+        if trace_recorder is not None:
+            detail = (
+                trace_recorder.detail(int(detail_id)) if detail_id.isdigit() else None
+            )
+            if detail is None:
+                return web.json_response({"error": "not found"}, status=404)
+            return web.json_response(detail)
         url = f"{trace_proxy_url.rstrip('/')}/__traces__/{detail_id}"
         timeout = aiohttp.ClientTimeout(total=5)
         try:
@@ -550,7 +620,7 @@ def build_app(
     async def list_toolsets(_request: web.Request) -> web.Response:
         try:
             toolsets = await hermes.list_toolsets()
-        except HermesError:
+        except (HermesError, EngineError):
             return web.json_response(
                 {"ok": False, "reason": "hermes_unavailable"}, status=502
             )
@@ -674,13 +744,14 @@ def build_app(
         )
 
     async def get_soul(_request: web.Request) -> web.Response:
-        # Read through the sidecar (single source of truth), not a local
-        # mount: the agent's atomic writes swap the file inode, which a
-        # single-file bind mount in this pod wouldn't track (stale reads).
-        content = await _agent_get_soul(config_agent_url, agent_token)
-        if content is None:
+        # The soul lives on the chat-owned data volume now (Sol Engine reads
+        # it per turn), so the panel reads the file directly — the Hermes-era
+        # config-sidecar hop is gone.
+        try:
+            content = Path(soul_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
             return web.json_response(
-                {"ok": False, "reason": "agent_unavailable"}, status=502
+                {"ok": False, "reason": "soul_unavailable"}, status=502
             )
         return web.json_response({"ok": True, "soul": {"content": content}})
 
@@ -698,12 +769,16 @@ def build_app(
             return web.json_response(
                 {"ok": False, "reason": "empty_content"}, status=400
             )
-        # The chat pod can't write Hermes' data dir; the privileged sidecar
-        # in the hermes pod does it. SOUL.md reloads live, so no restart.
-        ok = await _agent_put_soul(config_agent_url, agent_token, content)
-        if not ok:
+        # Atomic write on the chat-owned volume: the engine's mtime cache
+        # picks the edit up on the next turn, so it is live without restart.
+        try:
+            tmp = Path(soul_path).with_suffix(".tmp")
+            tmp.write_text(content, encoding="utf-8")
+            tmp.replace(soul_path)
+        except OSError as e:
+            log.error("chat.soul.write_failed", error=str(e))
             return web.json_response(
-                {"ok": False, "reason": "agent_unavailable"}, status=502
+                {"ok": False, "reason": "soul_unavailable"}, status=502
             )
         log.info(
             "chat.soul.edited",
@@ -712,24 +787,26 @@ def build_app(
         return web.json_response({"ok": True})
 
     async def get_model(request: web.Request) -> web.Response:
-        # Admin-only: the switch is an admin control and listing models is
-        # part of it; the panel only shows this to admins.
+        # Admin-only: the everyday-chat model toggle is an admin control.
         if not is_admin(request, remote_groups_header, admin_group):
             return web.json_response({"ok": False, "reason": "forbidden"}, status=403)
-        data = await _agent_get_model(config_agent_url, agent_token)
-        if data is None:
-            return web.json_response(
-                {"ok": False, "reason": "agent_unavailable"}, status=502
-            )
         return web.json_response(
             {
                 "ok": True,
-                "current": data.get("current", ""),
-                "available": data.get("available", []),
+                "current": other_model_pref,
+                "options": [
+                    {"value": "fast", "label": "Schnell", "model": fast_model},
+                    {
+                        "value": "thorough",
+                        "label": "Gründlich",
+                        "model": thorough_model,
+                    },
+                ],
             }
         )
 
     async def put_model(request: web.Request) -> web.Response:
+        nonlocal other_model_pref
         if not is_admin(request, remote_groups_header, admin_group):
             return web.json_response({"ok": False, "reason": "forbidden"}, status=403)
         try:
@@ -738,30 +815,28 @@ def build_app(
             return web.json_response(
                 {"ok": False, "reason": "invalid_json"}, status=400
             )
-        model = body.get("model")
-        if not isinstance(model, str) or not model.strip():
-            return web.json_response({"ok": False, "reason": "empty_model"}, status=400)
-        # Persistent change: the sidecar rewrites config.yaml and restarts
-        # Hermes (so it's admin-gated, per the panel's access model).
-        result = await _agent_put_model(config_agent_url, agent_token, model.strip())
-        if result is None:
+        value = body.get("value")
+        if value not in ("fast", "thorough"):
             return web.json_response(
-                {"ok": False, "reason": "agent_unavailable"}, status=502
+                {"ok": False, "reason": "invalid_value"}, status=400
             )
+        # A routing toggle, not a Hermes config rewrite: the household chat stays
+        # on e2b; every OTHER chat routes to e2b ("fast") or the 12b sol-deep
+        # gateway ("thorough"). Takes effect on the next turn — no restart.
+        other_model_pref = value
+        settings_store.set_other_model_pref(solilos_db_path, value)
         log.info(
             "chat.model.set",
             uid=resolve_uid(request, remote_user_header, default_uid),
-            model=model.strip(),
+            pref=value,
         )
-        return web.json_response(
-            {"ok": True, "restarted": bool(result.get("restarted"))}
-        )
+        return web.json_response({"ok": True, "current": value})
 
     async def list_sessions(request: web.Request) -> web.Response:
         uid = resolve_uid(request, remote_user_header, default_uid)
         try:
             sessions = await hermes.list_sessions(uid)
-        except HermesError:
+        except (HermesError, EngineError):
             return web.json_response(
                 {"ok": False, "reason": "hermes_unavailable"}, status=502
             )
@@ -800,7 +875,7 @@ def build_app(
                 )
             try:
                 session_id = await admin_gw.create_session(uid, soul, maintenance=True)
-            except HermesError:
+            except (HermesError, EngineError):
                 return web.json_response(
                     {"ok": False, "reason": "hermes_unavailable"}, status=502
                 )
@@ -820,7 +895,7 @@ def build_app(
         # per-session persona overlay that would fight it.
         try:
             session_id = await hermes.create_session(uid)
-        except HermesError:
+        except (HermesError, EngineError):
             return web.json_response(
                 {"ok": False, "reason": "hermes_unavailable"}, status=502
             )
@@ -832,7 +907,7 @@ def build_app(
         session_id = request.match_info["session_id"]
         try:
             session = await hermes.get_session(session_id, uid)
-        except HermesError:
+        except (HermesError, EngineError):
             return web.json_response(
                 {"ok": False, "reason": "hermes_unavailable"}, status=502
             )
@@ -854,7 +929,7 @@ def build_app(
         session_id = request.match_info["session_id"]
         try:
             ok = await hermes.delete_session(session_id)
-        except HermesError:
+        except (HermesError, EngineError):
             return web.json_response(
                 {"ok": False, "reason": "hermes_unavailable"}, status=502
             )
@@ -1003,12 +1078,24 @@ def build_app(
         session_id = str(body.get("session_id") or "")
         topic_slug = str(body.get("topic") or "").strip()
         ephemeral = bool(body.get("ephemeral"))
-        effort = reasoning.choose_effort(
-            text,
-            selector=body.get("reasoning"),
-            admin=is_admin(request, remote_groups_header, admin_group),
+        # Household ("Zuhause") turns are fast-only: never think, never escalate.
+        household = is_household_chat(uid, session_id, topic_slug)
+        effort = (
+            "none"
+            if household
+            else reasoning.choose_effort(
+                text,
+                selector=body.get("reasoning"),
+                admin=is_admin(request, remote_groups_header, admin_group),
+            )
         )
-        client = gateway_for(request, session_id, body.get("personality"))
+        client = gateway_for(
+            request,
+            session_id,
+            body.get("personality"),
+            uid=uid,
+            topic_slug=topic_slug,
+        )
 
         clock = asyncio.get_event_loop().time
         t_start = clock() * 1000.0
@@ -1034,7 +1121,7 @@ def build_app(
             )
             persist_mentions(uid, session_id, text, ephemeral=ephemeral)
             reply = await client.chat(session_id, turn_text, images, effort)
-        except HermesError:
+        except (HermesError, EngineError):
             return web.json_response(
                 {"ok": False, "reason": "hermes_unavailable"}, status=502
             )
@@ -1074,12 +1161,24 @@ def build_app(
         session_id = str(body.get("session_id") or "")
         topic_slug = str(body.get("topic") or "").strip()
         ephemeral = bool(body.get("ephemeral"))
-        effort = reasoning.choose_effort(
-            text,
-            selector=body.get("reasoning"),
-            admin=is_admin(request, remote_groups_header, admin_group),
+        # Household ("Zuhause") turns are fast-only: never think, never escalate.
+        household = is_household_chat(uid, session_id, topic_slug)
+        effort = (
+            "none"
+            if household
+            else reasoning.choose_effort(
+                text,
+                selector=body.get("reasoning"),
+                admin=is_admin(request, remote_groups_header, admin_group),
+            )
         )
-        client = gateway_for(request, session_id, body.get("personality"))
+        client = gateway_for(
+            request,
+            session_id,
+            body.get("personality"),
+            uid=uid,
+            topic_slug=topic_slug,
+        )
 
         resp = web.StreamResponse(
             headers={
@@ -1177,7 +1276,7 @@ def build_app(
                 )
                 await _send_event(resp, "trace", trace)
                 await persist_turn_trace(uid, session_id, wall_t0, ephemeral=ephemeral)
-        except HermesError:
+        except (HermesError, EngineError):
             await _send_event(resp, "error", {"reason": "hermes_unavailable"})
         finally:
             cancels.pop(session_id, None)
@@ -1406,45 +1505,6 @@ async def _agent_test_mcp(
         return None
 
 
-async def _agent_get_model(agent_url: str, token: str) -> dict[str, Any] | None:
-    """Read {current, available} from the sidecar. None on failure."""
-    url = f"{agent_url.rstrip('/')}/model"
-    try:
-        timeout = aiohttp.ClientTimeout(total=15)
-        async with aiohttp.ClientSession(timeout=timeout) as client:
-            async with client.get(url, headers=_agent_headers(token)) as r:
-                if r.status >= 400:
-                    return None
-                return await r.json()
-    except (aiohttp.ClientError, TimeoutError, OSError, ValueError) as e:
-        log.error("chat.agent.unreachable", op="get_model", error=str(e))
-        return None
-
-
-async def _agent_put_model(
-    agent_url: str, token: str, model: str
-) -> dict[str, Any] | None:
-    """Ask the sidecar to set the model (it restarts Hermes). The agent's
-    JSON ({ok, restarted}) on 2xx, None otherwise."""
-    url = f"{agent_url.rstrip('/')}/model"
-    try:
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(timeout=timeout) as client:
-            async with client.put(
-                url, json={"model": model}, headers=_agent_headers(token)
-            ) as r:
-                if r.status >= 400:
-                    detail = (await r.text())[:300]
-                    log.error(
-                        "chat.agent.error", op="put_model", status=r.status, body=detail
-                    )
-                    return None
-                return await r.json()
-    except (aiohttp.ClientError, TimeoutError, OSError, ValueError) as e:
-        log.error("chat.agent.unreachable", op="put_model", error=str(e))
-        return None
-
-
 async def _send_event(
     resp: web.StreamResponse, event: str, data: dict[str, Any]
 ) -> None:
@@ -1560,6 +1620,7 @@ async def serve(
     solilos_db_path: str = "/var/lib/solilos/solilos.db",
     notes_dir: str = "/opt/data/notes",
     trace_proxy_url: str = "http://127.0.0.1:11436",
+    trace_recorder: Any = None,
 ) -> None:
     if isinstance(context_window, int):
         context_window = ContextWindow.static(context_window)
@@ -1585,6 +1646,7 @@ async def serve(
         solilos_db_path=solilos_db_path,
         notes_dir=notes_dir,
         trace_proxy_url=trace_proxy_url,
+        trace_recorder=trace_recorder,
     )
     runner = web.AppRunner(app)
     await runner.setup()
