@@ -2025,99 +2025,67 @@ async def test_put_soul_agent_failure_is_502(aiohttp_client, monkeypatch):
     assert resp.status == 502
 
 
-# --- Model switch (admin, proxied to the config sidecar) ------------------
+# --- Everyday-chat model toggle (admin; fast/thorough routing pref) -------
 
 
-async def test_get_model_admin(aiohttp_client, monkeypatch):
-    from solilos_chat import server as server_mod
-
-    async def fake_get(url, token):
-        return {"current": "gemma4:e4b", "available": ["gemma4:e4b", "llama3:8b"]}
-
-    monkeypatch.setattr(server_mod, "_agent_get_model", fake_get)
-    app = build_app(
-        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
+def _model_app(tmp_path):
+    return build_app(
+        hermes=_FakeHermes(),
+        remote_user_header="Remote-User",
+        default_uid="household",
+        fast_model="gemma4:e2b",
+        thorough_model="gemma4:12b",
+        solilos_db_path=str(tmp_path / "solilos.db"),
+        attachments_dir=str(tmp_path / "att"),
     )
-    client = await aiohttp_client(app)
+
+
+async def test_get_model_admin(aiohttp_client, tmp_path):
+    client = await aiohttp_client(_model_app(tmp_path))
     resp = await client.get("/api/model", headers={"Remote-Groups": "admins"})
     body = await resp.json()
     assert resp.status == 200
-    assert body["current"] == "gemma4:e4b"
-    assert body["available"] == ["gemma4:e4b", "llama3:8b"]
+    assert body["current"] == "thorough"  # default
+    assert body["options"] == [
+        {"value": "fast", "label": "Schnell", "model": "gemma4:e2b"},
+        {"value": "thorough", "label": "Gründlich", "model": "gemma4:12b"},
+    ]
 
 
-async def test_get_model_non_admin_forbidden(aiohttp_client):
-    app = build_app(
-        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
-    )
-    client = await aiohttp_client(app)
+async def test_get_model_non_admin_forbidden(aiohttp_client, tmp_path):
+    client = await aiohttp_client(_model_app(tmp_path))
     resp = await client.get("/api/model", headers={"Remote-Groups": "family"})
     assert resp.status == 403
 
 
-async def test_put_model_admin_proxies(aiohttp_client, monkeypatch):
-    from solilos_chat import server as server_mod
+async def test_put_model_admin_persists(aiohttp_client, tmp_path):
+    from solilos_chat import settings_store
 
-    calls = []
-
-    async def fake_put(url, token, model):
-        calls.append((url, token, model))
-        return {"ok": True, "restarted": True}
-
-    monkeypatch.setattr(server_mod, "_agent_put_model", fake_put)
-    app = build_app(
-        hermes=_FakeHermes(),
-        remote_user_header="Remote-User",
-        default_uid="household",
-        config_agent_url="http://agent:8650",
-        agent_token="k",
-    )
-    client = await aiohttp_client(app)
+    client = await aiohttp_client(_model_app(tmp_path))
     resp = await client.put(
-        "/api/model", json={"model": "llama3:8b"}, headers={"Remote-Groups": "admins"}
+        "/api/model", json={"value": "fast"}, headers={"Remote-Groups": "admins"}
     )
     body = await resp.json()
     assert resp.status == 200
-    assert body == {"ok": True, "restarted": True}
-    assert calls == [("http://agent:8650", "k", "llama3:8b")]
+    assert body == {"ok": True, "current": "fast"}
+    # Persisted to the JSON sidecar so it survives a restart.
+    assert settings_store.get_other_model_pref(str(tmp_path / "solilos.db")) == "fast"
 
 
-async def test_put_model_non_admin_forbidden_no_call(aiohttp_client, monkeypatch):
-    from solilos_chat import server as server_mod
-
-    called = []
-
-    async def fake_put(url, token, model):
-        called.append(1)
-        return {"ok": True}
-
-    monkeypatch.setattr(server_mod, "_agent_put_model", fake_put)
-    app = build_app(
-        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
-    )
-    client = await aiohttp_client(app)
+async def test_put_model_non_admin_forbidden(aiohttp_client, tmp_path):
+    client = await aiohttp_client(_model_app(tmp_path))
     resp = await client.put(
-        "/api/model", json={"model": "x"}, headers={"Remote-Groups": "family"}
+        "/api/model", json={"value": "fast"}, headers={"Remote-Groups": "family"}
     )
     assert resp.status == 403
-    assert called == []
 
 
-async def test_put_model_agent_failure_is_502(aiohttp_client, monkeypatch):
-    from solilos_chat import server as server_mod
-
-    async def fake_put(url, token, model):
-        return None
-
-    monkeypatch.setattr(server_mod, "_agent_put_model", fake_put)
-    app = build_app(
-        hermes=_FakeHermes(), remote_user_header="Remote-User", default_uid="household"
-    )
-    client = await aiohttp_client(app)
+async def test_put_model_rejects_unknown_value(aiohttp_client, tmp_path):
+    client = await aiohttp_client(_model_app(tmp_path))
     resp = await client.put(
-        "/api/model", json={"model": "x"}, headers={"Remote-Groups": "admins"}
+        "/api/model", json={"value": "gemma4:12b"}, headers={"Remote-Groups": "admins"}
     )
-    assert resp.status == 502
+    assert resp.status == 400
 
 
 # --- Skill edit (admin) ---------------------------------------------------
@@ -2595,16 +2563,25 @@ async def test_deep_session_followups_stay_on_deep_gateway(aiohttp_client):
     assert [t[1].rsplit("\n\n", 1)[-1] for t in deep.turns] == ["eins", "zwei"]
 
 
-async def test_default_persona_stays_on_household_not_deep(aiohttp_client):
-    # Without the sol-deep persona a normal turn stays on the household (fast)
-    # gateway; the deep gateway is untouched.
+async def test_default_persona_with_fast_pref_stays_on_household(
+    aiohttp_client, tmp_path
+):
+    # Without the sol-deep persona a normal turn follows the everyday-chat model
+    # pref: with "fast" it stays on the household (e2b) gateway. (The "thorough"
+    # path → deep is covered in test_gateway_routing.)
+    from solilos_chat import settings_store
+
     household = _FakeHermes()
     deep = _FakeHermes()
+    db = str(tmp_path / "solilos.db")
+    settings_store.set_other_model_pref(db, "fast")
     app = build_app(
         hermes=household,
         hermes_deep=deep,
         remote_user_header="Remote-User",
         default_uid="household",
+        solilos_db_path=db,
+        attachments_dir=str(tmp_path / "att"),
     )
     client = await aiohttp_client(app)
 

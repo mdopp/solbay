@@ -9,13 +9,48 @@ dropdown's admin persona selects the admin gateway — all server-enforced.
 
 from __future__ import annotations
 
-from solilos_chat import personalities
+import sqlite3
+
+from solilos_chat import personalities, settings_store, topics_store
 from solilos_chat.server import build_app
 
 from .test_server import _FakeHermes
 
 ADMIN_HDRS = {"Remote-User": "mdopp", "Remote-Groups": "admins"}
 RESIDENT_HDRS = {"Remote-User": "cdopp", "Remote-Groups": "family"}
+
+# Minimal session_topics schema (migration 0005) so create can persist a primary
+# topic and follow-up routing can read it back.
+_SCHEMA = """
+CREATE TABLE topics (
+  slug TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'resident',
+  owner_uid TEXT
+);
+CREATE TABLE session_topics (
+  session_id TEXT NOT NULL,
+  topic_slug TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'secondary',
+  owner_uid TEXT NOT NULL,
+  PRIMARY KEY (session_id, topic_slug)
+);
+CREATE UNIQUE INDEX session_topics_one_primary_idx
+  ON session_topics (session_id) WHERE role = 'primary';
+"""
+
+
+def _db(tmp_path) -> str:
+    path = str(tmp_path / "solilos.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(_SCHEMA)
+    conn.execute(
+        "INSERT INTO topics (slug, display_name, scope) VALUES (?, ?, ?)",
+        ("household", "Zuhause", "system"),
+    )
+    conn.commit()
+    conn.close()
+    return path
 
 
 def _app(household, admin):
@@ -24,6 +59,19 @@ def _app(household, admin):
         hermes_admin=admin,
         remote_user_header="Remote-User",
         default_uid="household",
+    )
+
+
+def _deep_app(household, deep, tmp_path, *, pref="thorough"):
+    db = _db(tmp_path)
+    settings_store.set_other_model_pref(db, pref)
+    return build_app(
+        hermes=household,
+        hermes_deep=deep,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        solilos_db_path=db,
+        attachments_dir=str(tmp_path / "att"),
     )
 
 
@@ -227,3 +275,129 @@ async def test_falls_back_to_household_when_no_admin_gateway(aiohttp_client):
     )
     assert resp.status == 200
     assert household.turns
+
+
+# ---- everyday-chat model preference routing (#332-followup) ----
+
+
+async def test_household_topic_chat_routes_to_household_even_when_thorough(
+    aiohttp_client, tmp_path
+):
+    # The pinned "Zuhause" chat (primary topic = household) is ALWAYS the fast
+    # e2b household gateway, even though the everyday-chat preference is thorough.
+    household, deep = _FakeHermes(), _FakeHermes()
+    client = await aiohttp_client(_deep_app(household, deep, tmp_path, pref="thorough"))
+
+    resp = await client.post(
+        "/api/chat",
+        json={"input": "mach das licht an", "topic": "household"},
+        headers=RESIDENT_HDRS,
+    )
+    assert resp.status == 200
+    assert household.turns and household.turns[0][0] == "sess-1"
+    assert deep.turns == []
+    # Household turns are fast-only regardless of any selector.
+    assert household.efforts == ["none"]
+
+
+async def test_household_followup_reads_persisted_primary_topic(
+    aiohttp_client, tmp_path
+):
+    # A follow-up turn (different in-memory app state) routes to household by the
+    # persisted primary topic, not just the first-turn topic hint.
+    household, deep = _FakeHermes(), _FakeHermes()
+    db = _db(tmp_path)
+    settings_store.set_other_model_pref(db, "thorough")
+    topics_store.set_primary(db, "sess-42", "household", "cdopp")
+    app = build_app(
+        hermes=household,
+        hermes_deep=deep,
+        remote_user_header="Remote-User",
+        default_uid="household",
+        solilos_db_path=db,
+        attachments_dir=str(tmp_path / "att"),
+    )
+    client = await aiohttp_client(app)
+
+    resp = await client.post(
+        "/api/chat",
+        json={"input": "und im flur?", "session_id": "sess-42"},
+        headers=RESIDENT_HDRS,
+    )
+    assert resp.status == 200
+    assert household.turns and household.turns[0][0] == "sess-42"
+    assert deep.turns == []
+
+
+async def test_other_chat_thorough_routes_to_deep(aiohttp_client, tmp_path):
+    # A normal (non-household) chat with the thorough preference routes to the
+    # sol-deep (12b) gateway and keeps the resident's reasoning selector.
+    household, deep = _FakeHermes(), _FakeHermes()
+    client = await aiohttp_client(_deep_app(household, deep, tmp_path, pref="thorough"))
+
+    resp = await client.post(
+        "/api/chat",
+        json={"input": "erklär mir das", "reasoning": "high"},
+        headers=RESIDENT_HDRS,
+    )
+    assert resp.status == 200
+    assert deep.turns and deep.turns[0][0] == "sess-1"
+    assert household.turns == []
+    assert deep.efforts == ["high"]
+
+
+async def test_other_chat_fast_routes_to_household(aiohttp_client, tmp_path):
+    # The same normal chat with the fast preference stays on the e2b household
+    # gateway.
+    household, deep = _FakeHermes(), _FakeHermes()
+    client = await aiohttp_client(_deep_app(household, deep, tmp_path, pref="fast"))
+
+    resp = await client.post(
+        "/api/chat", json={"input": "erklär mir das"}, headers=RESIDENT_HDRS
+    )
+    assert resp.status == 200
+    assert household.turns and deep.turns == []
+
+
+async def test_model_put_toggles_routing(aiohttp_client, tmp_path):
+    # The admin Model setting is a live routing toggle: after switching to fast,
+    # a fresh normal chat routes to household instead of deep — no restart.
+    household, deep = _FakeHermes(), _FakeHermes()
+    client = await aiohttp_client(_deep_app(household, deep, tmp_path, pref="thorough"))
+
+    resp = await client.put("/api/model", json={"value": "fast"}, headers=ADMIN_HDRS)
+    assert resp.status == 200
+    assert (await resp.json())["current"] == "fast"
+
+    resp = await client.post(
+        "/api/chat", json={"input": "noch eine frage"}, headers=RESIDENT_HDRS
+    )
+    assert resp.status == 200
+    assert household.turns and deep.turns == []
+
+
+async def test_model_get_returns_options_and_current(aiohttp_client, tmp_path):
+    household, deep = _FakeHermes(), _FakeHermes()
+    client = await aiohttp_client(_deep_app(household, deep, tmp_path, pref="fast"))
+
+    resp = await client.get("/api/model", headers=ADMIN_HDRS)
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["current"] == "fast"
+    assert [o["value"] for o in body["options"]] == ["fast", "thorough"]
+
+
+async def test_model_put_rejects_unknown_value(aiohttp_client, tmp_path):
+    household, deep = _FakeHermes(), _FakeHermes()
+    client = await aiohttp_client(_deep_app(household, deep, tmp_path))
+
+    resp = await client.put("/api/model", json={"value": "12b"}, headers=ADMIN_HDRS)
+    assert resp.status == 400
+
+
+async def test_model_get_forbidden_for_non_admin(aiohttp_client, tmp_path):
+    household, deep = _FakeHermes(), _FakeHermes()
+    client = await aiohttp_client(_deep_app(household, deep, tmp_path))
+
+    resp = await client.get("/api/model", headers=RESIDENT_HDRS)
+    assert resp.status == 403
