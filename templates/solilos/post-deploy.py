@@ -442,7 +442,19 @@ def _flow_create(
 
 def ensure_wyoming_entry(token: str, label: str, host: str, port: int) -> None:
     """Register a wyoming service (whisper STT / piper TTS) in HA. The wyoming
-    flow aborts `already_configured` on a duplicate host+port — idempotent."""
+    flow does NOT de-dup on host+port (box-observed: a second run created a
+    duplicate entry), so idempotency is a title check against the existing
+    entries — the entry title is the announced wyoming service name."""
+    status, entries = _ha_get("/api/config/config_entries/entry", token)
+    if status == 200 and isinstance(entries, list):
+        for e in entries:
+            if (
+                isinstance(e, dict)
+                and e.get("domain") == "wyoming"
+                and label in str(e.get("title") or "").lower()
+            ):
+                jlog("info", "voice", f"wyoming {label}: already", port=port)
+                return
     state, result = _flow_create(token, "wyoming", [{"host": host, "port": port}])
     jlog(
         "info" if state in ("created", "already") else "warn",
@@ -730,7 +742,10 @@ def ensure_assist_pipeline(token: str, conversation_entity: str) -> bool:
                     "stt_engine": stt_entity,
                     "stt_language": "de",
                     "tts_engine": tts_entity,
-                    "tts_language": "de",
+                    # Wyoming piper announces regional voice codes — a bare
+                    # "de" makes every announce/TTS call 500 with "Language
+                    # 'de' not supported" (box-verified 2026-06-12).
+                    "tts_language": "de_DE",
                     "tts_voice": None,
                     "wake_word_entity": None,
                     "wake_word_id": None,

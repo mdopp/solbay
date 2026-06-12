@@ -244,7 +244,13 @@ class EngineClient:
             log.error("engine.respond.failed", source=source, error=str(e))
             raise EngineError(str(e)) from e
         finally:
-            current_uid.reset(token)
+            # A client that drops the stream closes this generator from a
+            # different asyncio context — the reset token is then foreign
+            # (box-observed ValueError on an aborted HA turn).
+            try:
+                current_uid.reset(token)
+            except ValueError:
+                pass
 
     async def _loop(
         self,
