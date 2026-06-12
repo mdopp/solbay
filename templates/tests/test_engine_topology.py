@@ -65,7 +65,9 @@ def test_exactly_chat_and_gatekeeper_containers(raw_template):
 
 
 def test_hermes_era_containers_gone(raw_template):
-    for retired in ("hermes-agent", "config-agent", "trace_proxy", "admin-soul"):
+    # The admin-soul *skill volume* legitimately stays (the engine's prompt
+    # assembly reads it); the retired idle container ran `sleep infinity`.
+    for retired in ("hermes-agent", "config-agent", "trace_proxy", "sleep"):
         assert retired not in raw_template
     assert "nousresearch" not in raw_template
 
