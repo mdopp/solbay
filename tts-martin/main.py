@@ -28,7 +28,12 @@ SAMPLE_RATE = 24000
 PAUSE_DURATION = float(os.getenv("KOKORO_PAUSE_DURATION", "0.25"))
 WORKERS = max(1, int(os.getenv("KOKORO_WORKERS", os.getenv("KOKORO_MAX_WORKERS", "1"))))
 WARMUP_TEXT = os.getenv("KOKORO_WARMUP_TEXT", "Hallo.")
-ORT_INTRA_OP_THREADS = max(1, int(os.getenv("KOKORO_ONNX_INTRA_OP_THREADS", os.getenv("KOKORO_ONNX_THREADS", "2"))))
+ORT_INTRA_OP_THREADS = max(
+    1,
+    int(
+        os.getenv("KOKORO_ONNX_INTRA_OP_THREADS", os.getenv("KOKORO_ONNX_THREADS", "2"))
+    ),
+)
 ORT_INTER_OP_THREADS = max(1, int(os.getenv("KOKORO_ONNX_INTER_OP_THREADS", "1")))
 ORT_EXECUTION_MODE = os.getenv("KOKORO_ONNX_EXECUTION_MODE", "sequential").lower()
 ORT_GRAPH_OPT = os.getenv("KOKORO_ONNX_GRAPH_OPT", "all").lower()
@@ -67,9 +72,15 @@ def make_session_options() -> ort.SessionOptions:
         "extended": ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED,
         "all": ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
     }
-    options.graph_optimization_level = graph_levels.get(ORT_GRAPH_OPT, ort.GraphOptimizationLevel.ORT_ENABLE_ALL)
-    options.add_session_config_entry("session.intra_op.allow_spinning", ORT_ALLOW_SPINNING)
-    options.add_session_config_entry("session.inter_op.allow_spinning", ORT_ALLOW_SPINNING)
+    options.graph_optimization_level = graph_levels.get(
+        ORT_GRAPH_OPT, ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    )
+    options.add_session_config_entry(
+        "session.intra_op.allow_spinning", ORT_ALLOW_SPINNING
+    )
+    options.add_session_config_entry(
+        "session.inter_op.allow_spinning", ORT_ALLOW_SPINNING
+    )
     return options
 
 
@@ -118,7 +129,9 @@ def warm_tts(tts: Kokoro, label: str) -> None:
             speed=1.0,
             lang=DEFAULT_LANG,
         )
-        print(f"{label} warmed in {time.perf_counter() - warmup_started:.3f}s", flush=True)
+        print(
+            f"{label} warmed in {time.perf_counter() - warmup_started:.3f}s", flush=True
+        )
     except Exception as err:
         print(f"{label} warm-up failed: {err!r}", flush=True)
 
@@ -178,7 +191,10 @@ def get_process_pool() -> ProcessPoolExecutor:
             initializer=init_process_worker,
             mp_context=multiprocessing.get_context("fork"),
         )
-        print("Kokoro ONNX process pool created; workers start on first request.", flush=True)
+        print(
+            "Kokoro ONNX process pool created; workers start on first request.",
+            flush=True,
+        )
     return process_pool
 
 
@@ -268,7 +284,9 @@ async def warm_process_pool_background() -> None:
         loop = asyncio.get_running_loop()
         warm_sentence = WARMUP_TEXT or "Hallo."
         warm_tasks = [(-1, warm_sentence, DEFAULT_VOICE, 1.0, DEFAULT_LANG)] * WORKERS
-        await asyncio.gather(*(loop.run_in_executor(pool, process_sentence, task) for task in warm_tasks))
+        await asyncio.gather(
+            *(loop.run_in_executor(pool, process_sentence, task) for task in warm_tasks)
+        )
         print("Kokoro ONNX process pool warmed in background.", flush=True)
     except Exception as err:
         print(f"Kokoro ONNX background warm-up failed: {err!r}", flush=True)
@@ -295,14 +313,19 @@ async def generate_speech(request: Request):
 
     if text != raw_text:
         print(f"TTS normalisiert: {raw_text[:80]} -> {text[:80]}", flush=True)
-    print(f"Generiere ONNX: {text[:40]}... [{voice}, pause={req_pause_duration}s]", flush=True)
+    print(
+        f"Generiere ONNX: {text[:40]}... [{voice}, pause={req_pause_duration}s]",
+        flush=True,
+    )
 
     try:
         started = time.perf_counter()
         sentences = split_into_sentences(text)
 
         if not sentences:
-            return Response(status_code=400, content="Kein verarbeitbarer Text gefunden.")
+            return Response(
+                status_code=400, content="Kein verarbeitbarer Text gefunden."
+            )
 
         results = [None] * len(sentences)
         tasks = [(i, s, voice, speed, lang) for i, s in enumerate(sentences)]
@@ -345,16 +368,22 @@ async def generate_speech(request: Request):
             if req_pause_duration > 0:
                 if i < num_sentences - 1:
                     # Pause zwischen den Sätzen
-                    pause = np.zeros(int(SAMPLE_RATE * req_pause_duration), dtype=np.float32)
+                    pause = np.zeros(
+                        int(SAMPLE_RATE * req_pause_duration), dtype=np.float32
+                    )
                     all_audio.append(pause)
                 elif i == num_sentences - 1:
                     # Diese Pause hilft dem I2S-Puffer des Speakers (z. B. ESPHome)
                     # zu leeren und die Status-LED geht aus.
-                    pause = np.zeros(int(SAMPLE_RATE * req_pause_duration), dtype=np.float32)
+                    pause = np.zeros(
+                        int(SAMPLE_RATE * req_pause_duration), dtype=np.float32
+                    )
                     all_audio.append(pause)
 
         if not all_audio:
-            raise ValueError("Ich hab alles gegeben, aber es konnte kein Audio generiert werden.")
+            raise ValueError(
+                "Ich hab alles gegeben, aber es konnte kein Audio generiert werden."
+            )
 
         final_audio = np.concatenate(all_audio)
 
@@ -364,7 +393,9 @@ async def generate_speech(request: Request):
             flush=True,
         )
 
-        return Response(content=wav_bytes(final_audio, SAMPLE_RATE), media_type="audio/wav")
+        return Response(
+            content=wav_bytes(final_audio, SAMPLE_RATE), media_type="audio/wav"
+        )
 
     except Exception as err:
         print(f"Kokoro ONNX Fehler: {err!r}", flush=True)

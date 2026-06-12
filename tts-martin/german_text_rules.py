@@ -36,42 +36,46 @@ ABBREVIATIONS = (
 # der Punkt wird durch \. am Ende des Patterns selbst konsumiert.
 # Reihenfolge beachten: längere/spezifischere Patterns zuerst (mAh vor mA, kWh vor W usw.)
 NUMBERED_UNITS = (
-    (r"kWh",    "Kilowattstunde",     "Kilowattstunden",     "f"),
-    (r"Wh",     "Wattstunde",         "Wattstunden",         "f"),
-    (r"GHz",    "Gigahertz",          "Gigahertz",           None),
-    (r"MHz",    "Megahertz",          "Megahertz",           None),
-    (r"kHz",    "Kilohertz",          "Kilohertz",           None),
-    (r"Hz",     "Hertz",              "Hertz",               None),
-    (r"Std\.",  "Stunde",             "Stunden",             "f"),
-    (r"Min\.",  "Minute",             "Minuten",             "f"),
-    (r"Sek\.",  "Sekunde",            "Sekunden",            "f"),
-    (r"Stck\.", "Stück",              "Stück",               "n"),
-    (r"mAh",    "Milliamperestunde",  "Milliamperestunden",  "f"),
-    (r"mA",     "Milliampere",        "Milliampere",         None),
-    (r"kg",     "Kilogramm",          "Kilogramm",           None),
-    (r"g",      "Gramm",              "Gramm",               None),
-    (r"km",     "Kilometer",          "Kilometer",           None),
-    (r"cm",     "Zentimeter",         "Zentimeter",          None),
-    (r"mm",     "Millimeter",         "Millimeter",          None),
-    (r"m3",     "Kubikmeter",         "Kubikmeter",          None),
-    (r"m",      "Meter",              "Meter",               None),
-    (r"ltr\.",  "Liter",              "Liter",               None),
-    (r"EUR",    "Euro",               "Euro",                None),
-    (r"W",      "Watt",               "Watt",                None),
-    (r"V",      "Volt",               "Volt",                None),
-    (r"Tsd\.",  "Tausend",            "Tausend",             None),
-    (r"Mio\.",  "Millionen",          "Millionen",           None),
-    (r"Mrd\.",  "Milliarden",         "Milliarden",          None),
+    (r"kWh", "Kilowattstunde", "Kilowattstunden", "f"),
+    (r"Wh", "Wattstunde", "Wattstunden", "f"),
+    (r"GHz", "Gigahertz", "Gigahertz", None),
+    (r"MHz", "Megahertz", "Megahertz", None),
+    (r"kHz", "Kilohertz", "Kilohertz", None),
+    (r"Hz", "Hertz", "Hertz", None),
+    (r"Std\.", "Stunde", "Stunden", "f"),
+    (r"Min\.", "Minute", "Minuten", "f"),
+    (r"Sek\.", "Sekunde", "Sekunden", "f"),
+    (r"Stck\.", "Stück", "Stück", "n"),
+    (r"mAh", "Milliamperestunde", "Milliamperestunden", "f"),
+    (r"mA", "Milliampere", "Milliampere", None),
+    (r"kg", "Kilogramm", "Kilogramm", None),
+    (r"g", "Gramm", "Gramm", None),
+    (r"km", "Kilometer", "Kilometer", None),
+    (r"cm", "Zentimeter", "Zentimeter", None),
+    (r"mm", "Millimeter", "Millimeter", None),
+    (r"m3", "Kubikmeter", "Kubikmeter", None),
+    (r"m", "Meter", "Meter", None),
+    (r"ltr\.", "Liter", "Liter", None),
+    (r"EUR", "Euro", "Euro", None),
+    (r"W", "Watt", "Watt", None),
+    (r"V", "Volt", "Volt", None),
+    (r"Tsd\.", "Tausend", "Tausend", None),
+    (r"Mio\.", "Millionen", "Millionen", None),
+    (r"Mrd\.", "Milliarden", "Milliarden", None),
 )
 
 GERMAN_SEPARATOR_DOT_PLACEHOLDER = "__WY_GERMAN_DOT__"
 GERMAN_SEPARATOR_UNIT_DOT_PATTERNS = tuple(
-    pattern for pattern, _singular, _plural, _gender in NUMBERED_UNITS if r"\." in pattern
+    pattern
+    for pattern, _singular, _plural, _gender in NUMBERED_UNITS
+    if r"\." in pattern
 )
 GERMAN_SEPARATOR_EXTRA_DOT_PATTERNS = (
     r"\b\d{1,2}\.\d{1,2}\.(?:\d{2,4}\.)?",
     r"\b\d{1,6}\.(?=\s+\w)",
 )
-GERMAN_SEPARATOR_DOT_PATTERNS = tuple(
-    pattern for pattern, _replacement in ABBREVIATIONS if r"\." in pattern
-) + GERMAN_SEPARATOR_UNIT_DOT_PATTERNS + GERMAN_SEPARATOR_EXTRA_DOT_PATTERNS
+GERMAN_SEPARATOR_DOT_PATTERNS = (
+    tuple(pattern for pattern, _replacement in ABBREVIATIONS if r"\." in pattern)
+    + GERMAN_SEPARATOR_UNIT_DOT_PATTERNS
+    + GERMAN_SEPARATOR_EXTRA_DOT_PATTERNS
+)

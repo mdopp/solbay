@@ -59,10 +59,9 @@ ORDINAL_TO_WORD = {
     30: "dreißigster",
 }
 
-MONTHS = (
-    r"(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)"
-)
+MONTHS = r"(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)"
 CARDINAL_LABEL_DOT_PLACEHOLDER = "__GODE_CARDINAL_DOT__"
+
 
 def number_to_words(number: int) -> str:
     """Return a German spoken form for common cardinal numbers."""
@@ -81,13 +80,17 @@ def number_to_words(number: int) -> str:
     if number < 1000:
         hundreds = number // 100
         rest = number % 100
-        prefix = "einhundert" if hundreds == 1 else f"{number_to_words(hundreds)}hundert"
+        prefix = (
+            "einhundert" if hundreds == 1 else f"{number_to_words(hundreds)}hundert"
+        )
         return prefix if rest == 0 else f"{prefix}{number_to_words(rest)}"
 
     if number < 1_000_000:
         thousands = number // 1000
         rest = number % 1000
-        prefix = "eintausend" if thousands == 1 else f"{number_to_words(thousands)}tausend"
+        prefix = (
+            "eintausend" if thousands == 1 else f"{number_to_words(thousands)}tausend"
+        )
         return prefix if rest == 0 else f"{prefix}{number_to_words(rest)}"
 
     return str(number)
@@ -109,7 +112,7 @@ def ordinal_to_words(number: int) -> str:
         if not cardinal.endswith(suffix_cardinal):
             return f"{cardinal}ster"
 
-        return f"{cardinal[:-len(suffix_cardinal)]}{ordinal_to_words(suffix_number)}"
+        return f"{cardinal[: -len(suffix_cardinal)]}{ordinal_to_words(suffix_number)}"
     return f"{number}."
 
 
@@ -142,7 +145,9 @@ def decimal_to_words(raw_value: str) -> str:
 
     integer_part, decimal_part = normalized.split(",", 1)
     integer_word = number_to_words(int(integer_part or "0"))
-    decimal_words = " ".join(number_to_words(int(digit)) for digit in decimal_part if digit.isdigit())
+    decimal_words = " ".join(
+        number_to_words(int(digit)) for digit in decimal_part if digit.isdigit()
+    )
     return f"{integer_word} komma {decimal_words}".strip()
 
 
@@ -174,6 +179,7 @@ def _unit_form(raw: str, singular: str, plural: str) -> str:
 
 def _normalize_numbered_units(text: str) -> str:
     for unit_pattern, singular, plural, gender in NUMBERED_UNITS:
+
         def replace_unit(
             match: re.Match,
             _singular: str = singular,
@@ -322,7 +328,11 @@ def normalize_tts_text(text: str) -> str:
         return f"{prefix_full}{word}"
 
     text = re.sub(r"(?<!\w)(-?\d+(?:[,.]\d+)?)\s*°\s*[Cc]\b", replace_temperature, text)
-    text = re.sub(r"(?<!\w)(-?\d+(?:[,.]\d+)?)\s*°(?!\s*[Cc]\b)", replace_degree_without_unit, text)
+    text = re.sub(
+        r"(?<!\w)(-?\d+(?:[,.]\d+)?)\s*°(?!\s*[Cc]\b)",
+        replace_degree_without_unit,
+        text,
+    )
     text = re.sub(
         r"(?i)(?<!\w)(am\s+|den\s+|zum\s+|vom\s+|bis\s+zum\s+|jeden\s+)?"
         r"(\d{1,2})\.(\d{1,2})\.(?:\s*(20\d{2}))?(?=\s|[.,!?]|$)",
@@ -331,13 +341,13 @@ def normalize_tts_text(text: str) -> str:
     )
     text = re.sub(
         r"(?i)(?<!\w)(am\s+|der\s+|die\s+|das\s+|den\s+|zum\s+|vom\s+|dem\s+|bis\s+zum\s+|jeden\s+)?"
-        r"(\d{1,2})\.\s*"
-        + MONTHS
-        + r"(?:\s+(20\d{2}))?(?=\s|[.,!?]|$)",
+        r"(\d{1,2})\.\s*" + MONTHS + r"(?:\s+(20\d{2}))?(?=\s|[.,!?]|$)",
         replace_text_date,
         text,
     )
-    text = re.sub(r"(?<!\w)(\d{1,2}):(\d{2})(?:\s*[Uu]hr)?(?=\s|[.,!?]|$)", replace_time, text)
+    text = re.sub(
+        r"(?<!\w)(\d{1,2}):(\d{2})(?:\s*[Uu]hr)?(?=\s|[.,!?]|$)", replace_time, text
+    )
     text = re.sub(
         r"(?i)(?<!\w)(am\s+|im\s+|zum\s+|vom\s+|dem\s+|den\s+|der\s+|die\s+|das\s+|"
         r"eine\s+|einer\s+|einen\s+|einem\s+|jeden\s+|jedem\s+|jede\s+|jeder\s+|"
