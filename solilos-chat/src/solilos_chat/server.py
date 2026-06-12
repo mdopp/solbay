@@ -34,6 +34,7 @@ from solilos_chat import (
 )
 from solilos_chat.attachments import AttachmentStore, attach_to_messages
 from solilos_chat.context import STATIC_DEFAULT, ContextWindow
+from solilos_chat.engine import store
 from solilos_chat.engine.client import EngineClient, EngineError
 from solilos_chat.engine.facade import add_facade_routes
 from solilos_chat.engine.tools.mcp_tools import McpToolbox
@@ -239,6 +240,7 @@ def build_app(
     trace_recorder: Any = None,
     residents: list[str] | None = None,
     api_key: str = "",
+    bus: Any = None,
 ) -> web.Application:
     # Known resident uids feeding the `@person` autosuggest seed (#279), beyond
     # the manual list in seeded_persons. The caller's own uid is always folded
@@ -281,6 +283,9 @@ def build_app(
         """True when this turn belongs to the pinned household chat — by the
         first-turn topic, the fast-path set, or the persisted primary topic."""
         if topic_slug == HOUSEHOLD_TOPIC:
+            return True
+        if session_id and session_id == store.household_session_id(uid):
+            # The durable voice/household session (#345) — fast e2b, no think.
             return True
         if session_id and session_id in household_sessions:
             return True
@@ -529,6 +534,53 @@ def build_app(
         session_id = request.match_info["session_id"]
         steps = trace_store.list_session_trace(solilos_db_path, session_id, uid)
         return web.json_response({"ok": True, "steps": steps})
+
+    async def session_events(request: web.Request) -> web.StreamResponse:
+        # The live mirror (#344): a browser opens this for the session it's
+        # showing and receives turns that originate elsewhere — voice via the
+        # facade, or another tab of the same person — near-live. Per-resident
+        # scope: only the session's owner uid sees its turns (privacy posture,
+        # like trace_store D3), so a wrong-owner subscribe gets a silent empty
+        # stream. The originating request keeps its own /api/chat/stream; this
+        # only carries the OTHER clients' view.
+        uid = resolve_uid(request, remote_user_header, default_uid)
+        session_id = request.match_info["session_id"]
+        if store.session_owner(solilos_db_path, session_id) != uid:
+            return web.json_response({"ok": False, "reason": "forbidden"}, status=403)
+        resp = web.StreamResponse(
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            }
+        )
+        await resp.prepare(request)
+        if bus is None:
+            await _send_event(resp, "done", {})
+            return resp
+        streamed = False
+        try:
+            async for item in bus.subscribe(session_id, uid):
+                kind = item.get("kind")
+                if kind == "mirror_user":
+                    text = strip_internal_hints(str(item["event"].get("text") or ""))
+                    await _send_event(resp, "mirror_user", {"text": text})
+                    streamed = False
+                elif kind == "mirror_event":
+                    name, data = _normalize(item["event"])
+                    if name == "delta" and data.get("text"):
+                        streamed = True
+                    elif name == "completed":
+                        # A tool-only turn streams no deltas — surface the final
+                        # answer once (the #258 late-delta pattern), but don't
+                        # double it when the answer already streamed.
+                        answer = data.pop("answer", "")
+                        if answer and not streamed:
+                            await _send_event(resp, "delta", {"text": answer})
+                    await _send_event(resp, name, data)
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        return resp
 
     async def trace_detail(request: web.Request) -> web.Response:
         # Exact per-call content for one trace step (#307 panel → #305 detail).
@@ -1266,6 +1318,7 @@ def build_app(
     app.router.add_get("/api/mentions/persons", mentions_persons)
     app.router.add_get("/api/sessions/{session_id}/mentions", session_mentions)
     app.router.add_get("/api/sessions/{session_id}/trace", session_trace)
+    app.router.add_get("/api/sessions/{session_id}/events", session_events)
     app.router.add_get("/__traces__/{detail_id}", trace_detail)
     app.router.add_post("/api/chat", chat)
     app.router.add_post("/api/chat/stream", chat_stream)
@@ -1511,6 +1564,7 @@ async def serve(
     notes_dir: str = "/opt/data/notes",
     trace_recorder: Any = None,
     api_key: str = "",
+    bus: Any = None,
 ) -> None:
     if isinstance(context_window, int):
         context_window = ContextWindow.static(context_window)
@@ -1535,6 +1589,7 @@ async def serve(
         notes_dir=notes_dir,
         trace_recorder=trace_recorder,
         api_key=api_key,
+        bus=bus,
     )
     runner = web.AppRunner(app)
     await runner.setup()

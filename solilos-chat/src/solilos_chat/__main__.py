@@ -17,7 +17,7 @@ async def _run() -> None:
     context_window = await build_context_window(
         settings.ollama_url, settings.context_window_override
     )
-    household, deep, admin, recorder = build_engine_clients(
+    household, deep, admin, recorder, bus = build_engine_clients(
         db_path=settings.solilos_db_path,
         ollama_url=settings.ollama_url,
         fast_model=settings.fast_model,
@@ -67,6 +67,7 @@ async def _run() -> None:
         notes_dir=settings.notes_dir,
         trace_recorder=recorder,
         api_key=settings.api_key,
+        bus=bus,
     )
 
 

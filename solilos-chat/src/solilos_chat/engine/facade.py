@@ -96,9 +96,16 @@ def add_facade_routes(
         uid = str(body.get("user") or default_uid)
         log.info("engine.facade.turn", model=model, uid=uid, n_messages=len(messages))
 
+        # A voice turn lands in the resident's durable household session (#345):
+        # the store owns the history, so only the latest user utterance is run
+        # (HA still replays its whole list — we take the tail). The same session
+        # the browser opens, so spoken + typed history are one conversation and
+        # the turn mirrors live into open tabs (#344) via the persisted path.
+        text = _last_user(messages)
+
         if not stream:
             try:
-                answer = await _drain(client, messages, uid)
+                answer = await _drain(client, text, uid)
             except EngineError:
                 return web.json_response({"error": "engine unavailable"}, status=502)
             return web.Response(
@@ -110,7 +117,7 @@ def add_facade_routes(
         await resp.prepare(request)
         streamed = ""
         try:
-            async for event in client.respond(messages, uid=uid, source="assist"):
+            async for event in client.respond_session(text, uid=uid):
                 if event["type"] == "assistant.delta":
                     delta = str(event["data"].get("delta") or "")
                     if delta:
@@ -134,10 +141,19 @@ def add_facade_routes(
     app.router.add_post("/ollama/api/chat", chat)
 
 
-async def _drain(client: EngineClient, messages: list[Any], uid: str) -> str:
+def _last_user(messages: list[Any]) -> str:
+    """The latest user utterance in HA's replayed message list (#345). The
+    durable session owns the rest of the history, so only the tail is run."""
+    for msg in reversed(messages):
+        if isinstance(msg, dict) and msg.get("role") == "user" and msg.get("content"):
+            return str(msg["content"])
+    return ""
+
+
+async def _drain(client: EngineClient, text: str, uid: str) -> str:
     answer = ""
     streamed = ""
-    async for event in client.respond(messages, uid=uid, source="assist"):
+    async for event in client.respond_session(text, uid=uid):
         if event["type"] == "assistant.delta":
             streamed += str(event["data"].get("delta") or "")
         elif event["type"] == "run.completed":

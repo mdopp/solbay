@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from solilos_chat.engine import client as engine_client
+from solilos_chat.engine.bus import SessionBus
 from solilos_chat.engine.client import EngineClient, EngineProfile
 from solilos_chat.engine.ollama import OllamaChat
 from solilos_chat.engine.registry import EntityRegistry
@@ -69,10 +70,11 @@ def build_engine_clients(
     tavily_api_key: str = "",
     notes_dir: str = "",
     context_window: int | None = None,
-) -> tuple[EngineClient, EngineClient, EngineClient, TraceRecorder]:
-    """Returns (household, deep, admin) clients + their shared recorder."""
+) -> tuple[EngineClient, EngineClient, EngineClient, TraceRecorder, SessionBus]:
+    """Returns (household, deep, admin) clients + the shared recorder + bus."""
     ollama = OllamaChat(ollama_url)
     recorder = TraceRecorder()
+    bus = SessionBus()
     registry = EntityRegistry(hass_url, hass_token)
 
     household_tools: list[Tool] = []
@@ -90,6 +92,7 @@ def build_engine_clients(
             ollama=ollama,
             recorder=recorder,
             context_window=context_window,
+            bus=bus,
         )
 
     household = make(
@@ -126,4 +129,4 @@ def build_engine_clients(
             toolbox=admin_toolbox,
         )
     )
-    return household, deep, admin, recorder
+    return household, deep, admin, recorder, bus

@@ -27,6 +27,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from solilos_chat.engine import store
+from solilos_chat.engine.bus import SessionBus
 from solilos_chat.engine.ollama import OllamaChat, OllamaError
 from solilos_chat.engine.registry import EntityRegistry
 from solilos_chat.engine.tools import Toolbox
@@ -125,12 +126,14 @@ class EngineClient:
         ollama: OllamaChat,
         recorder: TraceRecorder,
         context_window: int | None = None,
+        bus: SessionBus | None = None,
     ):
         self._profile = profile
         self._db_path = db_path
         self._ollama = ollama
         self._recorder = recorder
         self._context_window = context_window
+        self._bus = bus
         self._soul_cache: tuple[float, str] = (0.0, "")
 
     @property
@@ -251,9 +254,14 @@ class EngineClient:
         messages += store.history(self._db_path, session_id)
         think = self._profile.think_default or reasoning_effort not in ("", "none")
         owner = store.session_owner(self._db_path, session_id) or ""
+        # Mirror the inbound transcript to this session's OTHER open tabs (#344)
+        # before any token streams — a tab that didn't originate the turn (voice,
+        # or another browser) renders the user bubble as soon as it lands.
+        self._mirror(session_id, owner, "mirror_user", {"text": text})
         async for event in self._loop(
             messages, think=think, session_id=session_id, persist=True, uid=owner
         ):
+            self._mirror(session_id, owner, "mirror_event", event)
             yield event
 
     async def respond(
@@ -311,6 +319,28 @@ class EngineClient:
                 current_uid.reset(token)
             except ValueError:
                 pass
+
+    async def respond_session(
+        self,
+        text: str,
+        *,
+        uid: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """A voice turn into the resident's durable household session (#345).
+
+        Where `respond` is stateless (HA owns the history), this persists into
+        the shared household session — the same row the browser opens — so
+        spoken and typed history are one conversation. HA still resends its
+        full message list, but the store is now the source of truth, so only
+        the latest user `text` is run; the soul/registry block is the session's
+        own (the caller's per-call system prompt is dropped — the durable
+        session already carries the engine's identity)."""
+        session_id = store.ensure_household_session(self._db_path, uid)
+        # The wall-clock hint rides the user turn (the session path has no
+        # topic-hint wrapper) — same lever the browser turns get server-side.
+        turn = f"{_now_hint()}\n\n{text}" if text else text
+        async for event in self.chat_stream(session_id, turn):
+            yield event
 
     async def _loop(
         self,
@@ -493,6 +523,17 @@ class EngineClient:
             if block:
                 parts.append(block)
         return "\n\n".join(p for p in parts if p.strip())
+
+    def _mirror(
+        self, session_id: str, uid: str, kind: str, event: dict[str, Any]
+    ) -> None:
+        """Publish one turn event to this session's other open tabs (#344).
+
+        No-op without a bus (offline tests) or an owner. The originating request
+        keeps its own direct stream; subscribers are every OTHER open client of
+        the same (session, uid)."""
+        if self._bus is not None and uid:
+            self._bus.publish(session_id, uid, {"kind": kind, "event": event})
 
     def _soul(self) -> str:
         """SOUL.md, mtime-cached — an edit lands on the next turn, no restart."""
