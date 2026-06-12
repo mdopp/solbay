@@ -109,7 +109,8 @@ flowchart LR
         end
         subgraph Voice["voice"]
             Whisper["voice-whisper :10300<br/>faster-whisper GPU medium-int8"]
-            Piper["piper :10200<br/>de_DE-thorsten-high"]
+            Martin["voice-tts :8881 + bridge :10203<br/>Kokoro-Martin GPU (Sol's voice)"]
+            Piper["piper :10200<br/>de_DE-thorsten (fallback)"]
         end
         subgraph Solilos["solilos pod"]
             Chat["chat :8787 — Sol Engine<br/>agent loop · sessions · traces<br/>scheduler · night crons"]
@@ -125,7 +126,7 @@ flowchart LR
     PE -- "ESPHome API (only path)" --> Pipeline
     Pipeline -- "audio" --> Whisper
     Pipeline -- "text → conversation.sol" --> Chat
-    Pipeline -- "answer text" --> Piper
+    Pipeline -- "answer text" --> Martin
     Browser -- "chat.<domain>" --> NPM --> Chat
     Sat -. "Wyoming" .-> GK -- "/ollama facade" --> Chat
     Chat -- "/api/chat per turn<br/>model+think per request" --> Ollama
@@ -136,7 +137,8 @@ flowchart LR
 ```
 
 GPU budget (16.4 GB): e2b + 12b + nomic resident ≈ 12.6 GB, whisper
-medium-int8 ≈ 1.1 GB — everything stays loaded, no eviction churn.
+medium-int8 ≈ 1.1 GB, Kokoro-Martin TTS ≈ 1.2 GB — ≈ 14.9 GB total,
+everything stays loaded, no eviction churn (watch this headroom).
 
 ### Voice (the PE speaker path)
 
@@ -163,7 +165,7 @@ sequenceDiagram
     participant W as whisper (GPU)
     participant E as Sol Engine
     participant O as ollama
-    participant P as piper
+    participant P as Martin TTS (GPU)
 
     Note over PE: "Okay Nabu …" (wake on-device,<br/>no audio leaves before it)
     PE->>HA: audio stream (ESPHome API)
@@ -174,7 +176,7 @@ sequenceDiagram
     O-->>E: deltas (+ tool_calls)
     E->>HA: tool calls (ha_call_service / ha_get_state …)
     E-->>HA: answer deltas (HA never sees tool_calls)
-    HA->>P: Wyoming TTS (streams)
+    HA->>P: Wyoming bridge → Kokoro-Martin (streams)
     P-->>PE: audio
 ```
 
@@ -183,6 +185,7 @@ Measured end-to-end (real spoken turns + live bench, 2026-06-12):
 | Segment | Measured |
 |---|---|
 | speech end → transcript (GPU medium-int8) | **0.38 s** (CPU base was 0.76–2.86 s) |
+| TTS first audio (Kokoro-Martin GPU) | **0.03–0.36 s** (picked by ear over piper, servicebay#1815) |
 | transcript → Sol answer complete (e2b, warm) | 0.88–1.0 s |
 | facade TTFT plain / tool turn | 0.5–0.75 s / 1.3 s |
 | **speech end → answer ready** | **≈ 1.3–1.4 s** (gate ≤ 3 s) |

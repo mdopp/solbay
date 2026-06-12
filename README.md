@@ -9,7 +9,7 @@ v0.10 — see `solilos-architecture.md` for the full picture and flows.)
 
 ```mermaid
 flowchart LR
-    PE["🔊 Voice PE"] -- ESPHome --> HA["HA Assist pipeline<br/>whisper GPU · piper"]
+    PE["🔊 Voice PE"] -- ESPHome --> HA["HA Assist pipeline<br/>whisper GPU · Martin TTS GPU"]
     Browser["💻 Browser"] -- SSO --> Chat
     HA -- "conversation.sol" --> Chat["Sol Engine<br/>(solilos-chat)"]
     Chat -- "per-turn model+think" --> Ollama["ollama (GPU)<br/>e2b · 12b"]
