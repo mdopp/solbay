@@ -84,6 +84,45 @@ async def test_respond_is_stateless_and_folds_system(db, soul):
     conn.close()
 
 
+async def test_tool_discipline_pinned_last_before_caller_prompt(db, soul):
+    # Position is load-bearing (box A/B 2026-06-12): the anti-narration rule
+    # must sit at the END of the engine's system block, after soul/registry,
+    # so it outweighs narrative examples in the caller-supplied history.
+    async def handler(args):
+        return "{}"
+
+    tool = Tool(
+        name="ha_call_service",
+        description="x",
+        parameters={"type": "object", "properties": {}},
+        handler=handler,
+    )
+    client, fake = _engine(
+        db,
+        soul,
+        [ChatResult(content="Ok.", prompt_tokens=5, completion_tokens=1)],
+        tools=[tool],
+    )
+    messages = [
+        {"role": "system", "content": "Antworte kurz."},
+        {"role": "user", "content": "Licht an"},
+    ]
+    [e async for e in client.respond(messages, uid="michael")]
+    system = fake.calls[0]["messages"][0]["content"]
+    assert "Sage NIEMALS nur" in system
+    # After the soul, before the caller (HA) prompt — i.e. adjacent to history.
+    assert system.index("Du bist Sol.") < system.index("Sage NIEMALS nur")
+    assert system.index("Sage NIEMALS nur") < system.index("Antworte kurz.")
+
+
+async def test_no_tool_discipline_without_tools(db, soul):
+    client, fake = _engine(
+        db, soul, [ChatResult(content="Hi.", prompt_tokens=5, completion_tokens=1)]
+    )
+    [e async for e in client.respond([{"role": "user", "content": "hi"}], uid="m")]
+    assert "Sage NIEMALS nur" not in fake.calls[0]["messages"][0]["content"]
+
+
 async def test_respond_runs_tool_loop(db, soul):
     seen = []
 

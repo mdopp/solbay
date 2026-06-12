@@ -50,6 +50,20 @@ def _now_hint() -> str:
     return f"[Aktuelle Zeit: {now.strftime('%A, %d.%m.%Y, %H:%M Uhr %Z')}]"
 
 
+# Tool discipline, pinned as the LAST system block so it sits closest to the
+# history. Position is load-bearing (box A/B 2026-06-12): one stochastic
+# narrative reply in the history makes the model imitate it forever after —
+# the same rule placed early in the soul lost 0/3 against a poisoned history,
+# placed here it reliably restored tool calls. German on purpose: it must
+# outweigh German narrative examples in the history.
+_TOOL_DISCIPLINE = (
+    "Sage NIEMALS nur, dass du etwas tust, lädst oder prüfst. Für jede"
+    " Geräteaktion und jede Zustandsfrage rufst du IMMER zuerst das passende"
+    " Tool auf und antwortest erst mit dem Ergebnis — auch wenn frühere"
+    " Antworten im Verlauf eine Aktion nur angekündigt haben."
+)
+
+
 class EngineError(Exception):
     """Raised when a turn cannot run (DB/model failures). Name-compatible
     handling: server catches HermesError OR EngineError."""
@@ -380,6 +394,8 @@ class EngineClient:
             block = await self._profile.registry.prompt_block()
             if block:
                 parts.append(block)
+        if self._profile.toolbox.names():
+            parts.append(_TOOL_DISCIPLINE)
         return "\n\n".join(p for p in parts if p.strip())
 
     async def _system_prompt_stateless(self) -> str:
@@ -391,6 +407,8 @@ class EngineClient:
             block = await self._profile.registry.prompt_block()
             if block:
                 parts.append(block)
+        if self._profile.toolbox.names():
+            parts.append(_TOOL_DISCIPLINE)
         return "\n\n".join(p for p in parts if p.strip())
 
     def _soul(self) -> str:
