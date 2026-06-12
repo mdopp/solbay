@@ -11,6 +11,8 @@ a container-and-port is now a constructor call.
 Events yielded by `chat_stream` mirror the Hermes SSE shapes `_normalize`
 folds for the browser: `assistant.delta`, `tool.started`/`tool.completed`,
 `run.completed` (with `reasoning_content` on the final assistant message).
+Plus `llm.step` (model + wall_s after each Ollama pass) for the live
+activity bubble (#347); `_normalize` folds it to a `step` browser event.
 """
 
 from __future__ import annotations
@@ -409,6 +411,10 @@ class EngineClient:
                     result.completion_tokens,
                 )
             final_thinking = result.thinking or final_thinking
+            yield {
+                "type": "llm.step",
+                "data": {"model": self._profile.model, "wall_s": result.wall_s},
+            }
 
             if not result.tool_calls:
                 # Fabrication guard (#356): the model claims a device action is
@@ -463,13 +469,17 @@ class EngineClient:
                     current_uid.set(uid)
                 t0 = time.monotonic()
                 output = await self._profile.toolbox.dispatch(name, args)
+                tool_wall_s = time.monotonic() - t0
                 self._recorder.record_tool(
                     session_id=session_id,
                     profile=self._profile.name,
                     tool_name=name,
-                    wall_s=time.monotonic() - t0,
+                    wall_s=tool_wall_s,
                 )
-                yield {"type": "tool.completed", "data": {"tool": name}}
+                yield {
+                    "type": "tool.completed",
+                    "data": {"tool": name, "wall_s": tool_wall_s},
+                }
                 if persist:
                     store.append_message(self._db_path, session_id, "tool", output)
                 messages.append({"role": "tool", "content": output, "tool_name": name})
