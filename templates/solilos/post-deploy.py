@@ -501,28 +501,41 @@ def ensure_conversation_agent(token: str, chat_port: str, api_key: str) -> str:
     if existing:
         return existing
 
-    status, flow = _ha_post(
-        "/api/config/config_entries/subentries/flow",
-        token,
-        {"handler": [entry_id, "conversation"]},
-    )
-    if status != 200 or not isinstance(flow, dict) or not flow.get("flow_id"):
-        jlog("warn", "voice", "conversation subentry flow not started", status=status)
-        return ""
-    status, result = _ha_post(
-        f"/api/config/config_entries/subentries/flow/{flow['flow_id']}",
-        token,
-        {
-            "name": CONVERSATION_AGENT_NAME,
-            "model": ENGINE_MODEL,
-            "prompt": VOICE_PROMPT,
-        },
-    )
-    if (
-        status != 200
-        or not isinstance(result, dict)
-        or result.get("type") != "create_entry"
-    ):
+    # A freshly-created entry loads asynchronously and the subentry flow
+    # aborts `entry_not_loaded` until it has — retry briefly.
+    result: dict | None = None
+    for attempt in range(5):
+        if attempt:
+            time.sleep(3)
+        status, flow = _ha_post(
+            "/api/config/config_entries/subentries/flow",
+            token,
+            {"handler": [entry_id, "conversation"]},
+        )
+        if status != 200 or not isinstance(flow, dict) or not flow.get("flow_id"):
+            jlog(
+                "warn", "voice", "conversation subentry flow not started", status=status
+            )
+            return ""
+        status, result = _ha_post(
+            f"/api/config/config_entries/subentries/flow/{flow['flow_id']}",
+            token,
+            {
+                "name": CONVERSATION_AGENT_NAME,
+                "model": ENGINE_MODEL,
+                "prompt": VOICE_PROMPT,
+            },
+        )
+        if (
+            status == 200
+            and isinstance(result, dict)
+            and result.get("type") == "create_entry"
+        ):
+            break
+        if isinstance(result, dict) and result.get("reason") == "entry_not_loaded":
+            continue
+        break
+    if not isinstance(result, dict) or result.get("type") != "create_entry":
         jlog("warn", "voice", "conversation subentry not created", detail=result)
         return ""
     jlog("info", "voice", "created Sol conversation agent", entry_id=entry_id)
@@ -666,13 +679,20 @@ def ensure_assist_pipeline(token: str, conversation_entity: str) -> bool:
     point the Voice PE's pipeline select at it. Idempotent on the name."""
     # Needle-match the wyoming engines: the box already carries other tts
     # entities (e.g. a google cloud one) and the pipeline must ride the
-    # local whisper/piper pair.
-    stt_entity = _find_entity(token, "stt.", "whisper") or _find_entity(
-        token, "stt.", "wyoming"
-    )
-    tts_entity = _find_entity(token, "tts.", "piper") or _find_entity(
-        token, "tts.", "wyoming"
-    )
+    # local whisper/piper pair. Fresh wyoming entries register their
+    # entities asynchronously — poll briefly.
+    stt_entity = tts_entity = ""
+    for attempt in range(10):
+        if attempt:
+            time.sleep(3)
+        stt_entity = _find_entity(token, "stt.", "whisper") or _find_entity(
+            token, "stt.", "wyoming"
+        )
+        tts_entity = _find_entity(token, "tts.", "piper") or _find_entity(
+            token, "tts.", "wyoming"
+        )
+        if stt_entity and tts_entity:
+            break
     if not (stt_entity and tts_entity and conversation_entity):
         jlog(
             "warn",
