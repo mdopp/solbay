@@ -277,6 +277,20 @@ def test_normalize_tool_events():
     )
 
 
+def test_normalize_tool_completed_carries_wall_s():
+    # #347: a completed tool round-trip carries its own wall_s for the live bubble.
+    assert _normalize(
+        {"type": "tool.completed", "data": {"tool": "ha_call_service", "wall_s": 0.4}}
+    ) == ("tool", {"name": "ha_call_service", "phase": "completed", "wall_s": 0.4})
+
+
+def test_normalize_llm_step():
+    # #347: each completed Ollama pass folds to a `step` event (model + wall_s).
+    assert _normalize(
+        {"type": "llm.step", "data": {"model": "gemma4:e2b", "wall_s": 2.1}}
+    ) == ("step", {"label": "gemma4:e2b", "wall_s": 2.1})
+
+
 def test_normalize_completed_and_unknown():
     # run.completed with no reasoning => empty reasoning string (#231).
     assert _normalize({"type": "run.completed", "data": {}}) == (

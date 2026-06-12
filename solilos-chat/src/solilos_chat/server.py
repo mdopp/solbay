@@ -1477,8 +1477,9 @@ async def _heartbeat(
 def _normalize(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Fold a Hermes SSE event into a browser-facing `(event, data)` pair.
 
-    The browser only needs four shapes: a token delta, a tool start/stop
-    hint, and an end marker. Anything else collapses to a no-op `keepalive`.
+    The browser needs a token delta, a tool start/stop hint, an end marker,
+    and (for the live activity bubble, #347) a per-LLM-pass `step`. Anything
+    else collapses to a no-op `keepalive`.
     """
     etype = str(event.get("type") or "")
     data = event.get("data")
@@ -1488,10 +1489,18 @@ def _normalize(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         if not text and isinstance(data, str):
             text = data
         return "delta", {"text": str(text or "")}
+    if etype == "llm.step":
+        return "step", {
+            "label": str(payload.get("model") or "llm"),
+            "wall_s": payload.get("wall_s"),
+        }
     if etype in ("tool.started", "tool.completed"):
         name = payload.get("tool") or payload.get("name") or ""
         phase = "started" if etype == "tool.started" else "completed"
-        return "tool", {"name": str(name), "phase": phase}
+        out = {"name": str(name), "phase": phase}
+        if etype == "tool.completed" and payload.get("wall_s") is not None:
+            out["wall_s"] = payload["wall_s"]
+        return "tool", out
     if etype == "run.completed":
         return "completed", {
             "reasoning": _reasoning_from_completed(payload),
