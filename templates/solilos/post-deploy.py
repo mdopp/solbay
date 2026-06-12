@@ -664,8 +664,15 @@ def ensure_assist_pipeline(token: str, conversation_entity: str) -> bool:
     """Create the "Sol" Assist pipeline (wake on-device, stt=whisper,
     conversation=Sol, tts=piper) and make it the preferred pipeline. Then
     point the Voice PE's pipeline select at it. Idempotent on the name."""
-    stt_entity = _find_entity(token, "stt.")
-    tts_entity = _find_entity(token, "tts.")
+    # Needle-match the wyoming engines: the box already carries other tts
+    # entities (e.g. a google cloud one) and the pipeline must ride the
+    # local whisper/piper pair.
+    stt_entity = _find_entity(token, "stt.", "whisper") or _find_entity(
+        token, "stt.", "wyoming"
+    )
+    tts_entity = _find_entity(token, "tts.", "piper") or _find_entity(
+        token, "tts.", "wyoming"
+    )
     if not (stt_entity and tts_entity and conversation_entity):
         jlog(
             "warn",
@@ -732,25 +739,37 @@ def ensure_assist_pipeline(token: str, conversation_entity: str) -> bool:
 
 
 def _assign_pe_pipeline(token: str) -> None:
-    """Point the Voice PE's pipeline select at the Sol pipeline (fail-soft —
-    the PE may be offline; `preferred` already routes it once it reconnects)."""
-    select = _find_entity(token, "select.", "assist")
-    if not select:
+    """Point the Voice PE's pipeline select(s) at the Sol pipeline (fail-soft
+    — a select on `preferred` already follows the preferred pipeline, this
+    just pins it explicitly; the box PE exposes two assistant selects)."""
+    status, states = _ha_get("/api/states", token)
+    if status != 200 or not isinstance(states, list):
+        return
+    selects = [
+        str(s.get("entity_id"))
+        for s in states
+        if isinstance(s, dict)
+        and str(s.get("entity_id") or "").startswith("select.")
+        and "voice" in str(s.get("entity_id"))
+        and "assist" in str(s.get("entity_id"))
+    ]
+    if not selects:
         jlog("info", "voice", "no PE pipeline select entity found — skipping assign")
         return
-    status, _ = _ha_post(
-        "/api/services/select/select_option",
-        token,
-        {"entity_id": select, "option": PIPELINE_NAME},
-    )
-    jlog(
-        "info" if status == 200 else "warn",
-        "voice",
-        "PE pipeline select",
-        entity=select,
-        option=PIPELINE_NAME,
-        status=status,
-    )
+    for select in selects:
+        status, _ = _ha_post(
+            "/api/services/select/select_option",
+            token,
+            {"entity_id": select, "option": PIPELINE_NAME},
+        )
+        jlog(
+            "info" if status == 200 else "warn",
+            "voice",
+            "PE pipeline select",
+            entity=select,
+            option=PIPELINE_NAME,
+            status=status,
+        )
 
 
 def wire_voice_pipeline(token: str, chat_port: str, api_key: str) -> None:
