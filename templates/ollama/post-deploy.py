@@ -727,11 +727,13 @@ def main() -> int:
 
     # Warm-load the chat models so the first post-deploy turn doesn't pay
     # the cold reload. Source of truth = the locally installed tags
-    # (solbay#339: the env-derived list missed e2b). Largest first, the
-    # fast/voice model last — if VRAM forces an eviction (solbay#340) the
-    # hot path stays the one left warm.
+    # (solbay#339: the env-derived list missed e2b). Order is load-bearing
+    # (solbay#340, box-measured): SMALL first — with e2b resident a 12b
+    # load co-exists (13.9/16.4 GiB), but loading 12b first makes the
+    # subsequent e2b load evict it (ollama's free-VRAM check is
+    # conservative). Small-first ends with everything resident.
     warm_tags = local_chat_tags(ollama_url) or [m for m in (*extra_models, model) if m]
-    for warm in sorted(set(warm_tags), key=lambda t: ("e2b" in t, t)):
+    for warm in sorted(set(warm_tags), key=lambda t: ("e2b" not in t, t)):
         warm_load_model(ollama_url, warm)
 
     register_http_check(sb_api, sb_token, ollama_url)
