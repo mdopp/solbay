@@ -509,6 +509,8 @@ def build_app(
                     "finish_reason": rec.get("finish_reason"),
                     "n_tools": rec.get("n_tools"),
                     "detail_id": rec.get("id"),
+                    "step_kind": rec.get("step_kind"),
+                    "tool_name": rec.get("tool_name"),
                 }
                 for rec in trace_recorder.for_session(session_id, t0)
             ]

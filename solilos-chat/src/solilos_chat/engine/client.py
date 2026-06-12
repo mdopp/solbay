@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextvars
 import json
 import re
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -423,7 +424,14 @@ class EngineClient:
                 # pass 2 on (timers/facts written ownerless).
                 if uid:
                     current_uid.set(uid)
+                t0 = time.monotonic()
                 output = await self._profile.toolbox.dispatch(name, args)
+                self._recorder.record_tool(
+                    session_id=session_id,
+                    profile=self._profile.name,
+                    tool_name=name,
+                    wall_s=time.monotonic() - t0,
+                )
                 yield {"type": "tool.completed", "data": {"tool": name}}
                 if persist:
                     store.append_message(self._db_path, session_id, "tool", output)

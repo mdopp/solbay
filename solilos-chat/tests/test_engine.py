@@ -221,11 +221,14 @@ async def test_tool_chain_turn(db, soul):
     # the second pass got the tool result fed back
     roles = [m["role"] for m in fake.calls[1]["messages"]]
     assert "tool" in roles
-    # two trace records, tagged with the session
+    # the turn's trace is the full interleaved step list: LLM call (tool_calls)
+    # -> tool execution (with its own wall_s) -> final LLM call (#346).
     steps = client.recorder.for_session(sid, 0.0)
-    assert len(steps) == 2
+    assert [s["step_kind"] for s in steps] == ["llm", "tool", "llm"]
     assert steps[0]["finish_reason"] == "tool_calls"
-    assert steps[1]["finish_reason"] == "stop"
+    assert steps[1]["tool_name"] == "ha_call_service"
+    assert "wall_s" in steps[1]
+    assert steps[2]["finish_reason"] == "stop"
 
 
 async def test_fabricated_device_claim_forces_tool_call(db, soul):
