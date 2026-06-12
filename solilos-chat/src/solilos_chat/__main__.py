@@ -34,7 +34,11 @@ async def _run() -> None:
         context_window=context_window.value,
     )
     scheduler = TimerScheduler(
-        settings.solilos_db_path, settings.hass_url, settings.hass_token
+        settings.solilos_db_path,
+        settings.hass_url,
+        settings.hass_token,
+        settings.alarm_sound_media_id,
+        settings.alarm_sound_path,
     )
     scheduler.start()
     crons = CronRunner(

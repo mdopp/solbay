@@ -398,6 +398,96 @@ async def test_timer_fires_and_announces(db, monkeypatch):
     assert status == "fired"
 
 
+def _capture_announce(monkeypatch):
+    """Stub aiohttp so _announce hits one fake satellite and records the POST
+    body. Returns the list the announce payload lands in."""
+    posted: list[dict] = []
+
+    class _Resp:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def json(self):
+            return [{"entity_id": "assist_satellite.kitchen"}]
+
+        def raise_for_status(self):
+            return None
+
+    class _Session:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def get(self, _url, **k):
+            return _Resp()
+
+        def post(self, _url, *, json, **k):
+            posted.append(json)
+            return _Resp()
+
+    monkeypatch.setattr(scheduler.aiohttp, "ClientSession", _Session)
+    return posted
+
+
+async def test_alarm_rings_media_when_sound_present(monkeypatch, tmp_path):
+    sound = tmp_path / "alarm.ogg"
+    sound.write_bytes(b"OggS")
+    sched = scheduler.TimerScheduler(
+        ":memory:", "http://ha", "token", "media-source://x/alarm.ogg", str(sound)
+    )
+    posted = _capture_announce(monkeypatch)
+    assert await sched._announce({"kind": "alarm", "label": "Aufstehen"}) is True
+    assert posted == [
+        {
+            "entity_id": ["assist_satellite.kitchen"],
+            "media_id": "media-source://x/alarm.ogg",
+        }
+    ]
+
+
+async def test_alarm_falls_back_to_tts_when_sound_missing(monkeypatch, tmp_path):
+    sched = scheduler.TimerScheduler(
+        ":memory:",
+        "http://ha",
+        "token",
+        "media-source://x/alarm.ogg",
+        str(tmp_path / "absent.ogg"),
+    )
+    posted = _capture_announce(monkeypatch)
+    assert await sched._announce({"kind": "alarm", "label": ""}) is True
+    assert posted[0]["message"] == "Es ist Zeit aufzustehen."
+    assert "media_id" not in posted[0]
+
+
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        ("timer", "Der Timer Tee ist abgelaufen."),
+        ("reminder", "Erinnerung: Tee"),
+    ],
+)
+async def test_timer_and_reminder_keep_tts(monkeypatch, tmp_path, kind, message):
+    sound = tmp_path / "alarm.ogg"
+    sound.write_bytes(b"OggS")
+    sched = scheduler.TimerScheduler(
+        ":memory:", "http://ha", "token", "media-source://x/alarm.ogg", str(sound)
+    )
+    posted = _capture_announce(monkeypatch)
+    assert await sched._announce({"kind": kind, "label": "Tee"}) is True
+    assert posted[0]["message"] == message
+    assert "media_id" not in posted[0]
+
+
 # -- trace shape ---------------------------------------------------------
 
 
