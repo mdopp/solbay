@@ -79,6 +79,11 @@ class EngineProfile:
     extra_prompt: str = ""
     registry: EntityRegistry | None = None
     think_default: bool = False
+    # Sampling override; None keeps the model's default. The household hot
+    # path runs low temperature: at the modelfile default of 1.0 e2b
+    # occasionally narrates a device action instead of calling the tool, and
+    # one such reply in HA's history self-reinforces (box A/B 2026-06-12).
+    temperature: float | None = None
     toolbox: Toolbox = field(default_factory=lambda: Toolbox([]))
 
 
@@ -282,13 +287,18 @@ class EngineClient:
         """
         await self._profile.toolbox.prepare()
         tools = self._profile.toolbox.definitions()
+        options = (
+            {"temperature": self._profile.temperature}
+            if self._profile.temperature is not None
+            else None
+        )
 
         final_content = ""
         final_thinking = ""
         for _ in range(_MAX_PASSES):
             result = None
             async for kind, payload in self._ollama.stream(
-                self._profile.model, messages, tools=tools, think=think
+                self._profile.model, messages, tools=tools, think=think, options=options
             ):
                 if kind == "delta":
                     yield {"type": "assistant.delta", "data": {"delta": payload}}

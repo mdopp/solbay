@@ -45,6 +45,7 @@ class OllamaChat:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         think: bool = False,
+        options: dict[str, Any] | None = None,
     ):
         """Yield `("delta", str)` / `("thinking", str)` per chunk, then one
         final `("done", ChatResult)`. Closing the generator aborts the HTTP
@@ -58,6 +59,8 @@ class OllamaChat:
         }
         if tools:
             body["tools"] = tools
+        if options:
+            body["options"] = options
         result = ChatResult()
         t0 = time.monotonic()
         async with aiohttp.ClientSession(timeout=self._timeout) as client:

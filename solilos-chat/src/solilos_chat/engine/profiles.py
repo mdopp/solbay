@@ -99,6 +99,7 @@ def build_engine_clients(
             soul_path=soul_path,
             registry=registry,
             think_default=False,
+            temperature=0.2,
             toolbox=Toolbox(household_tools),
         )
     )

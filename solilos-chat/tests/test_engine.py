@@ -84,9 +84,15 @@ class FakeOllama:
         self.results = list(results)
         self.calls: list[dict] = []
 
-    async def stream(self, model, messages, tools=None, think=False):
+    async def stream(self, model, messages, tools=None, think=False, options=None):
         self.calls.append(
-            {"model": model, "messages": messages, "tools": tools, "think": think}
+            {
+                "model": model,
+                "messages": messages,
+                "tools": tools,
+                "think": think,
+                "options": options,
+            }
         )
         result = self.results.pop(0)
         for chunk in result.content.split(" "):
