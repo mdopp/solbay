@@ -753,7 +753,10 @@ def ensure_assist_pipeline(token: str, conversation_entity: str) -> bool:
             # every announce/TTS call 500 with "Language 'de' not supported"
             # (box-verified 2026-06-12).
             "tts_language": "de" if martin else "de_DE",
-            "tts_voice": "kokoro" if martin else None,
+            # The bridge announces the VOICE "martin" (the model name on the
+            # OpenAI side is "kokoro" — wrong here: a kokoro tts_voice makes
+            # every pipeline TTS fail silently, box bridge log 2026-06-12).
+            "tts_voice": "martin" if martin else None,
         }
         if existing is None:
             created = ws.cmd(

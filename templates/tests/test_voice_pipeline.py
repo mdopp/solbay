@@ -192,7 +192,7 @@ def test_pipeline_prefers_martin_bridge(pd, monkeypatch):
     create = _FakeWS.created[0]
     assert create["tts_engine"] == "tts.openai_streaming"
     assert create["tts_language"] == "de"
-    assert create["tts_voice"] == "kokoro"
+    assert create["tts_voice"] == "martin"
 
 
 def test_pipeline_piper_fallback_keeps_regional_language(pd, monkeypatch):
@@ -263,7 +263,7 @@ def test_existing_pipeline_converges_onto_martin(pd, monkeypatch):
     upd = _FakeWS.updated[0]
     assert upd["tts_engine"] == "tts.openai_streaming"
     assert upd["tts_language"] == "de"
-    assert upd["tts_voice"] == "kokoro"
+    assert upd["tts_voice"] == "martin"
     assert _FakeWS.preferred == ["p-old"]
 
 
