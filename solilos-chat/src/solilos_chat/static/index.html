@@ -1248,23 +1248,38 @@
         return det;
       }
 
-      // Per-turn LLM-step trace panel (#307). `steps` is the ordered list of
-      // Ollama calls for one turn (one trace_id), each `{model, wall_s,
-      // prompt_tokens, n_tools, detail_id, ...}`. Each row shows
-      // `model · wall_s · tokens` and, clicked, opens the exact request/response
-      // for that call (detail_id → /__traces__/<id>). Returns null when empty.
+      // Per-turn step trace panel (#307/#371). `steps` is the ordered list of a
+      // turn's steps (one trace_id), interleaved LLM calls and tool runs. A tool
+      // step (`step_kind === "tool"`) renders as `tool_name · wall_s` — it has no
+      // model/tokens, so rendering it as an LLM row produced the broken
+      // `(model?) · — tok` (#371). An LLM step renders `model · wall_s · tokens`
+      // and, clicked, opens the exact request/response (detail_id → /__traces__).
+      // Shown expanded by default, matching the live #347 activity bubble.
       function renderStepTrace(steps) {
         if (!steps || !steps.length) return null;
         var det = document.createElement("details");
         det.className = "steptrace";
+        det.open = true;
         var sum = document.createElement("summary");
-        sum.title = "LLM calls for this turn — click a step for its exact content";
+        sum.title = "Steps for this turn — click an LLM step for its exact content";
         det.appendChild(sum);
         var rows = document.createElement("div");
         rows.className = "step-rows";
         steps.forEach(function (s) {
           var row = document.createElement("div");
           row.className = "step-row";
+          var secs = s.wall_s != null ? Number(s.wall_s).toFixed(2) + "s" : "—";
+          if (s.step_kind === "tool") {
+            var tool = document.createElement("span");
+            tool.className = "st-model";
+            tool.textContent = s.tool_name || "(tool?)";
+            var tnum = document.createElement("span");
+            tnum.className = "st-num";
+            tnum.textContent = secs;
+            row.appendChild(tool); row.appendChild(tnum);
+            rows.appendChild(row);
+            return;
+          }
           if (s.detail_id != null) row.setAttribute("data-detail-id", String(s.detail_id));
           if (s.profile) {
             var prof = document.createElement("span");
@@ -1278,7 +1293,6 @@
           model.textContent = s.model || "(model?)";
           var num = document.createElement("span");
           num.className = "st-num";
-          var secs = s.wall_s != null ? Number(s.wall_s).toFixed(2) + "s" : "—";
           var toks = s.prompt_tokens != null ? s.prompt_tokens + " tok" : "— tok";
           var tools = s.n_tools ? " · " + s.n_tools + " tools" : "";
           num.textContent = secs + " · " + toks + tools;
