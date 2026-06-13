@@ -71,6 +71,7 @@ async def _run() -> None:
         thorough_model=settings.thorough_model,
         solilos_db_path=settings.solilos_db_path,
         notes_dir=settings.notes_dir,
+        ollama_url=settings.ollama_url,
         trace_recorder=recorder,
         api_key=settings.api_key,
         bus=bus,

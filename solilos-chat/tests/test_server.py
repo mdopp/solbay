@@ -1989,6 +1989,114 @@ async def test_put_household_model_rejects_unoffered_tag(aiohttp_client, tmp_pat
     assert resp.status == 400
 
 
+# --- Model pull + VRAM headroom estimate (#367; admin) --------------------
+
+
+class _FakeOllama:
+    """Stand-in for OllamaChat with canned tags/ps and a pull stream."""
+
+    tags_models: list = []
+    ps_models: list = []
+    pull_chunks: list = [{"status": "success"}]
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def tags(self):
+        return _FakeOllama.tags_models
+
+    async def ps(self):
+        return _FakeOllama.ps_models
+
+    async def pull(self, model):
+        _FakeOllama.pulled = model
+        for c in _FakeOllama.pull_chunks:
+            yield c
+
+
+_GIB = 1024 * 1024 * 1024
+
+
+async def test_vram_admin_combines_and_flags_over_budget(
+    aiohttp_client, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(server_mod, "OllamaChat", _FakeOllama)
+    monkeypatch.setenv("GPU_TOTAL_VRAM", str(4 * _GIB))
+    # Selected = fast (gemma4:e2b, on disk 6 GiB) + thorough (gemma4:12b, 6 GiB).
+    _FakeOllama.tags_models = [
+        {"name": "gemma4:e2b", "size": 6 * _GIB},
+        {"name": "gemma4:12b", "size": 6 * _GIB},
+    ]
+    _FakeOllama.ps_models = []
+    client = await aiohttp_client(_model_app(tmp_path))
+    resp = await client.get("/api/vram", headers={"Remote-Groups": "admins"})
+    body = await resp.json()
+    assert resp.status == 200
+    assert body["estimate"] is True
+    assert set(body["selected"]) == {"gemma4:e2b", "gemma4:12b"}
+    assert body["available_bytes"] == 4 * _GIB
+    assert body["combined_bytes"] > body["available_bytes"]
+    assert body["over_budget"] is True
+
+
+async def test_vram_unknown_available_does_not_flag(
+    aiohttp_client, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(server_mod, "OllamaChat", _FakeOllama)
+    monkeypatch.delenv("GPU_TOTAL_VRAM", raising=False)
+    monkeypatch.setattr(server_mod.vram.shutil, "which", lambda _: None)
+    _FakeOllama.tags_models = [{"name": "gemma4:e2b", "size": 6 * _GIB}]
+    _FakeOllama.ps_models = []
+    client = await aiohttp_client(_model_app(tmp_path))
+    resp = await client.get("/api/vram", headers={"Remote-Groups": "admins"})
+    body = await resp.json()
+    assert body["available_bytes"] is None
+    assert body["over_budget"] is False  # can't judge fit => never flag
+
+
+async def test_vram_non_admin_forbidden(aiohttp_client, tmp_path):
+    client = await aiohttp_client(_model_app(tmp_path))
+    resp = await client.get("/api/vram", headers={"Remote-Groups": "family"})
+    assert resp.status == 403
+
+
+async def test_pull_admin_streams_and_forwards_tag(
+    aiohttp_client, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(server_mod, "OllamaChat", _FakeOllama)
+    _FakeOllama.pull_chunks = [{"status": "downloading"}, {"status": "success"}]
+    client = await aiohttp_client(_model_app(tmp_path))
+    resp = await client.post(
+        "/api/model/pull",
+        json={"model": "hf.co/owner/repo:Q4_K_M"},
+        headers={"Remote-Groups": "admins"},
+    )
+    assert resp.status == 200
+    text = await resp.text()
+    assert _FakeOllama.pulled == "hf.co/owner/repo:Q4_K_M"
+    assert '"status": "success"' in text
+
+
+async def test_pull_non_admin_forbidden(aiohttp_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(server_mod, "OllamaChat", _FakeOllama)
+    client = await aiohttp_client(_model_app(tmp_path))
+    resp = await client.post(
+        "/api/model/pull",
+        json={"model": "gemma4:12b"},
+        headers={"Remote-Groups": "family"},
+    )
+    assert resp.status == 403
+
+
+async def test_pull_rejects_empty_model(aiohttp_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(server_mod, "OllamaChat", _FakeOllama)
+    client = await aiohttp_client(_model_app(tmp_path))
+    resp = await client.post(
+        "/api/model/pull", json={"model": "  "}, headers={"Remote-Groups": "admins"}
+    )
+    assert resp.status == 400
+
+
 # --- Skill edit (admin) ---------------------------------------------------
 
 

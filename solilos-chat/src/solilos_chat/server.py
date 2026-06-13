@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 import uuid
@@ -36,7 +37,9 @@ from solilos_chat.attachments import AttachmentStore, attach_to_messages
 from solilos_chat.context import STATIC_DEFAULT, ContextWindow
 from solilos_chat.engine import store
 from solilos_chat.engine.client import EngineClient, EngineError
+from solilos_chat.engine import vram
 from solilos_chat.engine.facade import add_facade_routes
+from solilos_chat.engine.ollama import OllamaChat, OllamaError
 from solilos_chat.engine.tools.mcp_tools import McpToolbox
 from solilos_chat.logging import log
 
@@ -238,6 +241,7 @@ def build_app(
     thorough_model: str = "",
     solilos_db_path: str = "/var/lib/solilos/solilos.db",
     notes_dir: str = "/opt/data/notes",
+    ollama_url: str = "http://127.0.0.1:11434",
     trace_recorder: Any = None,
     residents: list[str] | None = None,
     api_key: str = "",
@@ -875,6 +879,69 @@ def build_app(
         )
         return web.json_response({"ok": True, "current": value})
 
+    # The model tags whose combined VRAM footprint the headroom estimate sums:
+    # the household model (selected or fast default), the thorough model the
+    # deep/"Gründlich" path runs, and the embedding model — i.e. what's
+    # actually meant to be co-resident on the box.
+    def selected_models() -> list[str]:
+        tags = [current_household_model(), thorough_model]
+        embed = os.environ.get("EMBED_MODEL", "").strip()
+        if embed:
+            tags.append(embed)
+        return [t for t in tags if t]
+
+    async def get_vram(request: web.Request) -> web.Response:
+        if not is_admin(request, remote_groups_header, admin_group):
+            return web.json_response({"ok": False, "reason": "forbidden"}, status=403)
+        client = OllamaChat(ollama_url)
+        try:
+            tags, ps = await client.tags(), await client.ps()
+        except Exception:  # noqa: BLE001 — Ollama down => no estimate, not a 500
+            tags, ps = [], []
+        selected = selected_models()
+        combined = vram.combined_selected_bytes(selected, tags, ps)
+        available = vram.available_bytes(ps)
+        return web.json_response(
+            {
+                "ok": True,
+                "estimate": True,
+                "selected": selected,
+                "combined_bytes": combined,
+                "available_bytes": available,
+                # available unknown => we can't judge fit, so don't flag.
+                "over_budget": available is not None and combined > available,
+            }
+        )
+
+    async def pull_model(request: web.Request) -> web.StreamResponse:
+        if not is_admin(request, remote_groups_header, admin_group):
+            return web.json_response({"ok": False, "reason": "forbidden"}, status=403)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — any malformed JSON
+            return web.json_response(
+                {"ok": False, "reason": "invalid_json"}, status=400
+            )
+        model = (body.get("model") or "").strip()
+        if not model:
+            return web.json_response({"ok": False, "reason": "no_model"}, status=400)
+        log.info(
+            "chat.model.pull",
+            uid=resolve_uid(request, remote_user_header, default_uid),
+            model=model,
+        )
+        resp = web.StreamResponse()
+        resp.content_type = "application/x-ndjson"
+        await resp.prepare(request)
+        client = OllamaChat(ollama_url)
+        try:
+            async for chunk in client.pull(model):
+                await resp.write((json.dumps(chunk) + "\n").encode())
+        except OllamaError as e:
+            await resp.write((json.dumps({"error": str(e)}) + "\n").encode())
+        await resp.write_eof()
+        return resp
+
     async def list_sessions(request: web.Request) -> web.Response:
         uid = resolve_uid(request, remote_user_header, default_uid)
         try:
@@ -1341,6 +1408,8 @@ def build_app(
     app.router.add_put("/api/soul", put_soul)
     app.router.add_get("/api/model", get_model)
     app.router.add_put("/api/model", put_model)
+    app.router.add_get("/api/vram", get_vram)
+    app.router.add_post("/api/model/pull", pull_model)
     app.router.add_get("/api/sessions", list_sessions)
     app.router.add_post("/api/sessions", create_session)
     app.router.add_get("/api/sessions/{session_id}", get_session)
@@ -1614,6 +1683,7 @@ async def serve(
     thorough_model: str = "",
     solilos_db_path: str = "/var/lib/solilos/solilos.db",
     notes_dir: str = "/opt/data/notes",
+    ollama_url: str = "http://127.0.0.1:11434",
     trace_recorder: Any = None,
     api_key: str = "",
     bus: Any = None,
@@ -1640,6 +1710,7 @@ async def serve(
         thorough_model=thorough_model,
         solilos_db_path=solilos_db_path,
         notes_dir=notes_dir,
+        ollama_url=ollama_url,
         trace_recorder=trace_recorder,
         api_key=api_key,
         bus=bus,

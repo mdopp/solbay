@@ -39,6 +39,47 @@ class OllamaChat:
         self._base_url = base_url.rstrip("/")
         self._timeout = aiohttp.ClientTimeout(total=timeout, sock_read=timeout)
 
+    async def tags(self) -> list[dict[str, Any]]:
+        """`GET /api/tags` — the locally pulled models with their on-disk
+        `size` (bytes). Returns the `models` list (empty when unreachable)."""
+        return await self._get_models("/api/tags")
+
+    async def ps(self) -> list[dict[str, Any]]:
+        """`GET /api/ps` — the loaded models with `size`/`size_vram` (bytes).
+        Returns the `models` list (empty when nothing is loaded/unreachable)."""
+        return await self._get_models("/api/ps")
+
+    async def _get_models(self, path: str) -> list[dict[str, Any]]:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            async with client.get(f"{self._base_url}{path}") as resp:
+                if resp.status >= 400:
+                    raise OllamaError(f"ollama {path} {resp.status}")
+                body = await resp.json()
+        models = body.get("models") if isinstance(body, dict) else None
+        return models if isinstance(models, list) else []
+
+    async def pull(self, model: str):
+        """Stream `POST /api/pull` progress for a model tag/URL.
+
+        `model` is whatever `ollama pull` accepts — a registry tag
+        (`gemma4:12b`) or a Hugging Face GGUF repo (`hf.co/<repo>:<quant>`),
+        which Ollama resolves natively, so no separate HF download path is
+        needed. Yields each progress chunk as a dict (`status`/`completed`/
+        `total`/`digest`) verbatim; the caller relays it to the panel.
+        """
+        body = {"model": model, "stream": True}
+        async with aiohttp.ClientSession(timeout=self._timeout) as client:
+            async with client.post(f"{self._base_url}/api/pull", json=body) as resp:
+                if resp.status >= 400:
+                    detail = (await resp.text())[:500]
+                    raise OllamaError(f"ollama /api/pull {resp.status}: {detail}")
+                async for raw in resp.content:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    yield json.loads(line)
+
     async def stream(
         self,
         model: str,
