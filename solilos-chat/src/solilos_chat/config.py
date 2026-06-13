@@ -44,6 +44,8 @@ class Settings:
     admin_skills_dir: str
     sb_mcp_url: str
     sb_mcp_token_path: str
+    gatekeeper_url: str
+    gatekeeper_token: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -144,6 +146,15 @@ class Settings:
             sb_mcp_token_path=os.environ.get(
                 "SB_MCP_TOKEN_PATH", "/var/lib/solilos/sb-admin-token"
             ),
+            # The gatekeeper's in-pod HTTP listener (push + /enrol), reached
+            # over loopback like the other pod-internal callers. The
+            # onboarding dialog (#354) uses /enrol to register a resident's
+            # voice profile; the token is the gatekeeper's PUSH_TOKEN (empty
+            # is unauthenticated, the loopback default).
+            gatekeeper_url=os.environ.get(
+                "GATEKEEPER_URL", "http://127.0.0.1:10750"
+            ).strip(),
+            gatekeeper_token=os.environ.get("PUSH_TOKEN", "").strip(),
         )
 
 
