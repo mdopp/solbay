@@ -21,7 +21,7 @@ import contextvars
 import json
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -115,6 +115,11 @@ class EngineProfile:
     name: str
     model: str
     soul_path: str
+    # An optional per-turn model override (#366): when set, its return value
+    # (if non-empty) is the model for the next turn, so an admin can re-point
+    # the household profile from the panel without a restart. `model` is the
+    # static fallback (the configured default).
+    model_resolver: Callable[[], str] | None = None
     extra_prompt: str = ""
     registry: EntityRegistry | None = None
     think_default: bool = False
@@ -158,6 +163,12 @@ class EngineClient:
     @property
     def profile_name(self) -> str:
         return self._profile.name
+
+    def _model(self) -> str:
+        """The model for this turn: the profile's resolver override (#366) if it
+        yields a non-empty tag, else the static `profile.model` default."""
+        resolver = self._profile.model_resolver
+        return (resolver() if resolver else "") or self._profile.model
 
     @property
     def ephemeral(self) -> bool:
@@ -205,7 +216,7 @@ class EngineClient:
             {
                 "name": self._profile.name,
                 "label": f"Sol Engine · {self._profile.name}",
-                "description": f"model={self._profile.model}",
+                "description": f"model={self._model()}",
                 "enabled": True,
                 "configured": True,
                 "tools": self._profile.toolbox.names(),
@@ -389,10 +400,11 @@ class EngineClient:
         corrected = False
         final_content = ""
         final_thinking = ""
+        model = self._model()
         for _ in range(_MAX_PASSES):
             result = None
             async for kind, payload in self._ollama.stream(
-                self._profile.model, messages, tools=tools, think=think, options=options
+                model, messages, tools=tools, think=think, options=options
             ):
                 if kind == "delta":
                     yield {"type": "assistant.delta", "data": {"delta": payload}}
@@ -402,7 +414,7 @@ class EngineClient:
             self._recorder.record(
                 session_id=session_id,
                 profile=self._profile.name,
-                model=self._profile.model,
+                model=model,
                 messages=messages,
                 tools=tools,
                 content=result.content,
@@ -423,7 +435,7 @@ class EngineClient:
             final_thinking = result.thinking or final_thinking
             yield {
                 "type": "llm.step",
-                "data": {"model": self._profile.model, "wall_s": result.wall_s},
+                "data": {"model": model, "wall_s": result.wall_s},
             }
 
             if not result.tool_calls:

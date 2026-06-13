@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from solilos_chat import settings_store
 from solilos_chat.engine import client as engine_client
 from solilos_chat.engine.bus import SessionBus
 from solilos_chat.engine.client import EngineClient, EngineProfile
@@ -117,6 +118,10 @@ def build_engine_clients(
         EngineProfile(
             name="household",
             model=fast_model or "gemma4:e2b",
+            # Admin-selectable from the panel (#366): the persisted override wins
+            # per turn, falling back to the FAST_MODEL default when unset — so the
+            # fast-only default holds for installs that never touch the picker.
+            model_resolver=lambda: settings_store.get_household_model(db_path),
             soul_path=soul_path,
             registry=registry,
             think_default=False,

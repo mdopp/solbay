@@ -187,6 +187,35 @@ async def test_plain_turn_streams_and_persists(db, soul):
     assert session["input_tokens"] == 50
 
 
+async def test_model_resolver_overrides_static_model(db, soul):
+    # #366: a profile resolver re-points the model per turn; empty falls back.
+    override = {"value": ""}
+    fake = FakeOllama(
+        [
+            ChatResult(content="a"),
+            ChatResult(content="b"),
+        ]
+    )
+    client = EngineClient(
+        EngineProfile(
+            name="household",
+            model="gemma4:e2b",
+            soul_path=soul,
+            model_resolver=lambda: override["value"],
+        ),
+        db_path=db,
+        ollama=fake,
+        recorder=TraceRecorder(),
+        context_window=32768,
+    )
+    sid = await client.create_session("anna")
+    [e async for e in client.chat_stream(sid, "x")]
+    assert fake.calls[-1]["model"] == "gemma4:e2b"  # resolver empty -> default
+    override["value"] = "gemma4:12b"
+    [e async for e in client.chat_stream(sid, "y")]
+    assert fake.calls[-1]["model"] == "gemma4:12b"  # resolver wins
+
+
 async def test_tool_chain_turn(db, soul):
     seen = {}
 
