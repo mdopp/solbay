@@ -952,6 +952,30 @@
           <p class="model-current" id="household-model-current"></p>
           <p class="lead model-warn" id="household-model-warn" hidden>⚠️ A larger model on the household ("Zuhause") chat means slower voice/quick answers — the hot path is latency-sensitive. Keep it on the fast model unless you accept the latency.</p>
           <span class="editor-status" id="household-model-status"></span>
+
+          <h3>Voice</h3>
+          <p class="lead">Which Kokoro voice Sol speaks with — one voice for all spoken output (admin only). Takes effect on the next deploy.</p>
+          <div class="model-row">
+            <label for="voice-select">Spoken voice</label>
+            <select id="voice-select"></select>
+            <button id="voice-apply" class="btn-primary" type="button">Apply</button>
+          </div>
+          <p class="model-current" id="voice-current"></p>
+          <span class="editor-status" id="voice-status"></span>
+
+          <h3>Add a model</h3>
+          <p class="lead">Pull a model into the local Ollama by tag or URL — a registry tag (<code>gemma4:12b</code>) or a Hugging Face GGUF repo (<code>hf.co/&lt;repo&gt;:&lt;quant&gt;</code>). Once pulled it appears in the pickers above. Admin only.</p>
+          <div class="model-row">
+            <input id="pull-model-input" type="text" placeholder="gemma4:12b  or  hf.co/owner/repo:Q4_K_M" autocomplete="off" />
+            <button id="pull-model-btn" class="btn-primary" type="button">Pull</button>
+          </div>
+          <p class="model-current" id="pull-model-progress"></p>
+          <span class="editor-status" id="pull-model-status"></span>
+
+          <h3>VRAM headroom</h3>
+          <p class="lead">A rough <strong>estimate</strong> of available GPU VRAM vs the combined footprint of the currently-selected models — to gauge whether adding/selecting a model would blow the hardware. Not exact (KV cache + context overhead are approximated).</p>
+          <p class="model-current" id="vram-readout">Loading…</p>
+          <p class="lead model-warn" id="vram-warn" hidden>⚠️ The selected models' estimated VRAM exceeds the available VRAM — they likely won't all stay GPU-resident, which means CPU fallback and much slower turns.</p>
         </div>
       </div>
     </section>
@@ -2614,7 +2638,7 @@
         if (name === "soul" && !soulLoaded) { soulLoaded = true; loadSoul(); }
         if (name === "tools") { loadTools(); loadMcp(); }
         if (name === "prefs") { syncThinkingSeg(); }
-        if (name === "model") { loadModel(); }
+        if (name === "model") { loadModel(); loadVram(); loadVoice(); }
         closeRail();
       }
 
@@ -3056,6 +3080,135 @@
           })
           .finally(function () { modelApply.disabled = false; });
       });
+
+      // ---- Voice (admin; one Kokoro voice for all output, #368) ----
+      var voiceSelect = document.getElementById("voice-select");
+      var voiceApply = document.getElementById("voice-apply");
+      var voiceCurrent = document.getElementById("voice-current");
+      var voiceStatus = document.getElementById("voice-status");
+
+      function loadVoice() {
+        voiceStatus.className = "editor-status"; voiceStatus.textContent = "";
+        return fetch("/api/voice")
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) {
+            if (!j || !j.options) { voiceCurrent.textContent = "Could not load the voice setting."; return; }
+            var def = j.default || "";
+            var cur = j.current || def;
+            voiceSelect.textContent = "";
+            (j.options || []).forEach(function (v) {
+              var opt = document.createElement("option");
+              opt.value = v;
+              opt.textContent = v === def ? v + " (default)" : v;
+              if (v === cur) opt.selected = true;
+              voiceSelect.appendChild(opt);
+            });
+            voiceCurrent.textContent = cur ? "Current: " + cur : "";
+            voiceApply.disabled = (j.options || []).length < 2;
+          })
+          .catch(function () { voiceCurrent.textContent = "Could not load the voice setting."; });
+      }
+
+      voiceApply.addEventListener("click", function () {
+        var value = voiceSelect.value;
+        if (!value) return;
+        voiceApply.disabled = true;
+        voiceStatus.className = "editor-status"; voiceStatus.textContent = "Applying…";
+        fetch("/api/voice", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: value }) })
+          .then(function (r) { if (r.status === 403) throw new Error("forbidden"); if (!r.ok) throw new Error("failed"); return r.json(); })
+          .then(function () {
+            voiceStatus.className = "editor-status";
+            voiceStatus.textContent = "Sol will speak with " + value + " after the next deploy.";
+            voiceCurrent.textContent = "Current: " + value;
+          })
+          .catch(function (e) {
+            voiceStatus.className = "editor-status err";
+            voiceStatus.textContent = e.message === "forbidden" ? "Only admins can change the voice." : "Could not change the voice. Please try again.";
+          })
+          .finally(function () { voiceApply.disabled = false; });
+      });
+
+      // ---- Pull a model (admin; Ollama /api/model/pull, ndjson progress) ----
+      var pullInput = document.getElementById("pull-model-input");
+      var pullBtn = document.getElementById("pull-model-btn");
+      var pullProgress = document.getElementById("pull-model-progress");
+      var pullStatus = document.getElementById("pull-model-status");
+
+      function pullProgressText(chunk) {
+        if (chunk.error) return "Error: " + chunk.error;
+        var s = chunk.status || "";
+        if (typeof chunk.completed === "number" && typeof chunk.total === "number" && chunk.total > 0) {
+          return s + " — " + Math.floor((chunk.completed / chunk.total) * 100) + "%";
+        }
+        return s;
+      }
+
+      pullBtn.addEventListener("click", function () {
+        var model = pullInput.value.trim();
+        if (!model) return;
+        pullBtn.disabled = true;
+        pullStatus.className = "editor-status"; pullStatus.textContent = "Pulling…";
+        pullProgress.textContent = "";
+        fetch("/api/model/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: model }) })
+          .then(function (r) {
+            if (r.status === 403) throw new Error("forbidden");
+            if (!r.ok || !r.body) throw new Error("failed");
+            var reader = r.body.getReader();
+            var dec = new TextDecoder();
+            var buf = "";
+            var lastErr = null;
+            function pump() {
+              return reader.read().then(function (res) {
+                if (res.done) return;
+                buf += dec.decode(res.value, { stream: true });
+                var lines = buf.split("\n");
+                buf = lines.pop();
+                lines.forEach(function (line) {
+                  if (!line.trim()) return;
+                  var chunk; try { chunk = JSON.parse(line); } catch (e) { return; }
+                  if (chunk.error) lastErr = chunk.error;
+                  pullProgress.textContent = pullProgressText(chunk);
+                });
+                return pump();
+              });
+            }
+            return pump().then(function () {
+              if (lastErr) throw new Error(lastErr);
+            });
+          })
+          .then(function () {
+            pullStatus.className = "editor-status";
+            pullStatus.textContent = "Pulled " + model + ".";
+            pullProgress.textContent = "success";
+            // Newly pulled model becomes a picker option + shifts headroom.
+            loadModel(); loadVram();
+          })
+          .catch(function (e) {
+            pullStatus.className = "editor-status err";
+            pullStatus.textContent = e.message === "forbidden" ? "Only admins can pull models." : "Pull failed: " + e.message;
+          })
+          .finally(function () { pullBtn.disabled = false; });
+      });
+
+      // ---- VRAM headroom estimate (admin; /api/vram) ----
+      var vramReadout = document.getElementById("vram-readout");
+      var vramWarn = document.getElementById("vram-warn");
+      function gib(bytes) { return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GiB"; }
+      function loadVram() {
+        return fetch("/api/vram")
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) {
+            if (!j || !j.ok) { vramReadout.textContent = "Could not load the VRAM estimate."; vramWarn.hidden = true; return; }
+            var combined = "Selected models need ≈ " + gib(j.combined_bytes);
+            if (j.available_bytes == null) {
+              vramReadout.textContent = combined + "; available VRAM unknown (set GPU_TOTAL_VRAM or install nvidia-smi for a fit estimate).";
+            } else {
+              vramReadout.textContent = combined + " of ≈ " + gib(j.available_bytes) + " available (estimate).";
+            }
+            vramWarn.hidden = !j.over_budget;
+          })
+          .catch(function () { vramReadout.textContent = "Could not load the VRAM estimate."; vramWarn.hidden = true; });
+      }
 
       // The Admin option (#293) is admin-gated: it appears only once both the
       // persona list and whoami have resolved and the caller is an Authelia
