@@ -12,17 +12,18 @@ request to the human and finishes the provisioning once they approve:
       the voice-profile binding. The returned request id is stored on the row.
 
   check_resident_approval(uid) → polls that request id via
-      get_access_request_status. While "pending" nothing changes. On "resolved"
-      Solilos provisions its side: it marks the pending row approved and
-      confirms the enrolled voice profile (voice_embeddings, written by the
-      gatekeeper under this same uid during onboarding) is present and bound to
-      the uid. The admin is the gate — Solilos never approves itself.
-
-Open question deferred to #355 refinement: get_access_request_status returns
-only "resolved", with no approved-vs-denied signal, so the deny path (drop the
-captured biometrics via the gatekeeper's DELETE /enrolments/{uid}) is not yet
-implementable from the tool contract. This module treats "resolved" as approved
-and does not delete; the deny/cleanup half waits on that contract decision.
+      get_access_request_status, which returns one of pending / approved /
+      denied / not-found (servicebay#1824). While "pending" nothing changes.
+      On "approved" Solilos provisions its side: it marks the pending row
+      approved and confirms the enrolled voice profile (voice_embeddings,
+      written by the gatekeeper under this same uid during onboarding) is
+      present and bound to the uid. On "denied" Solilos provisions nothing and
+      drops the captured biometrics: it deletes the candidate's voice profile
+      via the gatekeeper's DELETE /enrolments/{uid} (the same cross-container
+      seam enrolment uses — the gatekeeper owns voice_embeddings writes) and
+      marks the local row denied. "not-found" means SB no longer knows the
+      request, so the local pending row is closed the same way (provision
+      nothing). The admin is the gate — Solilos never approves itself.
 
 Biometric care, as elsewhere: no embedding bytes ever cross this module — only
 the uid, display name and a present/absent verdict.
@@ -31,13 +32,49 @@ the uid, display name and a present/absent verdict.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
 
+import aiohttp
+
 from solilos_chat import pending_residents_store
 from solilos_chat.engine.tools import Tool
 from solilos_chat.engine.tools.mcp_tools import call_sb_tool
+
+# Same uid shape the gatekeeper's /enrolments/{uid} enforces.
+_UID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+
+async def _delete_voice_profile(
+    gatekeeper_url: str, gatekeeper_token: str, uid: str
+) -> bool:
+    """Drop the candidate's enrolled voice profile via the gatekeeper's
+    DELETE /enrolments/{uid} — the same HTTP seam enrolment rides, since the
+    gatekeeper owns voice_embeddings writes. Idempotent and best-effort:
+    deleting an absent profile is not an error, and a gatekeeper that is down
+    or unconfigured must not make the deny path raise (the local row is still
+    closed). Returns True only if a profile was actually removed."""
+    if not gatekeeper_url or not _UID_RE.match(uid):
+        return False
+    base = gatekeeper_url.rstrip("/")
+    headers = {}
+    if gatekeeper_token:
+        headers["Authorization"] = f"Bearer {gatekeeper_token}"
+    try:
+        async with aiohttp.ClientSession(timeout=_TIMEOUT) as client:
+            async with client.delete(
+                f"{base}/enrolments/{uid}", headers=headers
+            ) as resp:
+                try:
+                    body = await resp.json()
+                except aiohttp.ContentTypeError:
+                    return False
+        return bool(body.get("removed"))
+    except aiohttp.ClientError:
+        return False
 
 
 def _voice_profile_bound(db_path: str, uid: str) -> bool:
@@ -57,7 +94,11 @@ def _voice_profile_bound(db_path: str, uid: str) -> bool:
 
 
 def build_onboarding_approval_tools(
-    db_path: str, sb_mcp_url: str, sb_mcp_token_path: str
+    db_path: str,
+    sb_mcp_url: str,
+    sb_mcp_token_path: str,
+    gatekeeper_url: str = "",
+    gatekeeper_token: str = "",
 ) -> list[Tool]:
     async def file_approval(args: dict[str, Any]) -> str:
         uid = str(args.get("uid") or "").strip()
@@ -109,20 +150,35 @@ def build_onboarding_approval_tools(
             )
         )
         status = polled.get("status")
-        if status != "resolved":
-            # pending / not-found → no provisioning, surface the raw status.
-            return json.dumps({"ok": True, "status": status, "provisioned": False})
-
-        pending_residents_store.mark_approved(db_path, pending["id"])
-        return json.dumps(
-            {
-                "ok": True,
-                "status": "approved",
-                "provisioned": True,
-                "uid": uid,
-                "voice_profile_bound": _voice_profile_bound(db_path, uid),
-            }
-        )
+        if status == "approved":
+            pending_residents_store.mark_approved(db_path, pending["id"])
+            return json.dumps(
+                {
+                    "ok": True,
+                    "status": "approved",
+                    "provisioned": True,
+                    "uid": uid,
+                    "voice_profile_bound": _voice_profile_bound(db_path, uid),
+                }
+            )
+        if status in ("denied", "not-found"):
+            # Provision nothing and drop the captured biometrics: a denied
+            # candidate (or a request SB no longer knows) must leave no
+            # resident, no account and no embedding behind. Delete first, then
+            # close the local row — both are idempotent, so a re-poll is safe.
+            removed = await _delete_voice_profile(gatekeeper_url, gatekeeper_token, uid)
+            pending_residents_store.mark_denied(db_path, pending["id"])
+            return json.dumps(
+                {
+                    "ok": True,
+                    "status": status,
+                    "provisioned": False,
+                    "uid": uid,
+                    "biometric_dropped": removed,
+                }
+            )
+        # pending (or any unexpected status) → no provisioning, surface it.
+        return json.dumps({"ok": True, "status": status, "provisioned": False})
 
     return [
         Tool(
@@ -146,8 +202,9 @@ def build_onboarding_approval_tools(
                 "Prüft den Freigabe-Status einer eingereichten"
                 " Bewohner-Registrierung (admin-only). Bei Freigabe schließt es"
                 " die Solilos-Seite ab: markiert die Anfrage als freigegeben und"
-                " bestätigt das gebundene Sprachprofil. Solilos gibt nie selbst"
-                " frei."
+                " bestätigt das gebundene Sprachprofil. Bei Ablehnung wird nichts"
+                " provisioniert und das erfasste Sprachprofil gelöscht. Solilos"
+                " gibt nie selbst frei."
             ),
             parameters={
                 "type": "object",

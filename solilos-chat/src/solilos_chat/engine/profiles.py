@@ -162,7 +162,13 @@ def build_engine_clients(
         admin_toolbox = CombinedToolbox(
             McpToolbox(sb_mcp_url, sb_mcp_token_path),
             Toolbox(
-                build_onboarding_approval_tools(db_path, sb_mcp_url, sb_mcp_token_path)
+                build_onboarding_approval_tools(
+                    db_path,
+                    sb_mcp_url,
+                    sb_mcp_token_path,
+                    gatekeeper_url,
+                    gatekeeper_token,
+                )
             ),
         )
     else:

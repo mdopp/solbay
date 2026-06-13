@@ -25,6 +25,7 @@ from typing import Any
 
 STATUS_PENDING = "pending"
 STATUS_APPROVED = "approved"
+STATUS_DENIED = "denied"
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -92,6 +93,24 @@ def mark_approved(db_path: str, row_id: int) -> None:
             (STATUS_APPROVED, row_id),
         )
         conn.commit()
+
+
+def mark_denied(db_path: str, row_id: int) -> None:
+    """Flip a request to denied once the admin has dismissed it in SB's list,
+    or when SB no longer knows the request (resolved-gone). The candidate's
+    captured biometrics are dropped separately; this only closes the local row
+    so it stops surfacing as pending. Idempotent on a missing/absent row."""
+    if not Path(db_path).exists():
+        return
+    try:
+        with _connect(db_path) as conn:
+            conn.execute(
+                "UPDATE pending_residents SET status = ? WHERE id = ?",
+                (STATUS_DENIED, row_id),
+            )
+            conn.commit()
+    except sqlite3.OperationalError:
+        return
 
 
 def list_pending_residents(db_path: str) -> list[dict[str, Any]]:

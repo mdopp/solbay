@@ -3,9 +3,12 @@
 The SB-MCP calls (file_access_request / get_access_request_status) are mocked by
 monkeypatching `call_sb_tool`, so we assert the Solilos side only: the request
 is filed with the right shape (uid as the LLDAP username, candidate name as the
-subject, the request id stored on the row); status is polled; a "resolved"
-verdict marks the pending row approved and confirms the voice-profile binding;
-"pending"/"not-found" provision nothing. No real SB account is created.
+subject, the request id stored on the row); status is polled; the tri-state
+verdict (servicebay#1824) is handled — "approved" marks the row approved and
+confirms the voice-profile binding (never dropping the biometric); "denied"
+drops the captured voice profile via the gatekeeper seam and closes the row;
+"pending" provisions nothing; "not-found" cleans up gracefully. The gatekeeper
+DELETE is mocked, so no real SB account is created and no real audio is touched.
 """
 
 from __future__ import annotations
@@ -71,11 +74,24 @@ def _stub_sb(monkeypatch, replies: dict[str, dict]) -> list[tuple]:
     return calls
 
 
+def _stub_delete(monkeypatch, removed: bool = True) -> list[str]:
+    """Replace _delete_voice_profile (the gatekeeper DELETE /enrolments/{uid}
+    seam); record the uids it was asked to drop and return a canned verdict."""
+    dropped: list[str] = []
+
+    async def fake(gatekeeper_url, gatekeeper_token, uid):
+        dropped.append(uid)
+        return removed
+
+    monkeypatch.setattr(onboarding_approval, "_delete_voice_profile", fake)
+    return dropped
+
+
 def _tools(db):
     return {
         t.name: t
         for t in onboarding_approval.build_onboarding_approval_tools(
-            db, "http://sb/mcp", "/tmp/token"
+            db, "http://sb/mcp", "/tmp/token", "http://gatekeeper", "gk-token"
         )
     }
 
@@ -123,14 +139,15 @@ async def test_file_approval_is_idempotent(tmp_path, monkeypatch):
     assert calls == []  # already filed → no second SB call
 
 
-async def test_check_approval_resolved_provisions_and_binds(tmp_path, monkeypatch):
+async def test_check_approval_approved_provisions_and_binds(tmp_path, monkeypatch):
     db = _db(tmp_path)
     rid = pending_residents_store.add_pending_resident(
         db, "lena", "Lena", enrolled=True
     )
     pending_residents_store.set_request_id(db, rid, "req-42")
     _enrol(db, "lena")
-    _stub_sb(monkeypatch, {"get_access_request_status": {"status": "resolved"}})
+    _stub_sb(monkeypatch, {"get_access_request_status": {"status": "approved"}})
+    dropped = _stub_delete(monkeypatch)
 
     out = json.loads(
         await _tools(db)["check_resident_approval"].handler({"uid": "lena"})
@@ -139,10 +156,63 @@ async def test_check_approval_resolved_provisions_and_binds(tmp_path, monkeypatc
     assert out["provisioned"] is True
     assert out["voice_profile_bound"] is True
 
+    # Approval never drops the biometric, and the enrolment row survives.
+    assert dropped == []
+    assert onboarding_approval._voice_profile_bound(db, "lena") is True
+
     # Pending row flipped → no longer surfaced as pending.
     assert pending_residents_store.get_pending_by_uid(db, "lena") is None
     rows = pending_residents_store.list_pending_residents(db)
     assert rows == []
+
+
+async def test_check_approval_denied_drops_biometric_no_provision(
+    tmp_path, monkeypatch
+):
+    db = _db(tmp_path)
+    rid = pending_residents_store.add_pending_resident(
+        db, "lena", "Lena", enrolled=True
+    )
+    pending_residents_store.set_request_id(db, rid, "req-42")
+    _enrol(db, "lena")
+    _stub_sb(monkeypatch, {"get_access_request_status": {"status": "denied"}})
+    dropped = _stub_delete(monkeypatch, removed=True)
+
+    out = json.loads(
+        await _tools(db)["check_resident_approval"].handler({"uid": "lena"})
+    )
+    assert out["status"] == "denied"
+    assert out["provisioned"] is False
+    assert out["biometric_dropped"] is True
+
+    # The voice profile is dropped (via the gatekeeper seam) and the local row
+    # is closed: no resident, no pending request left behind.
+    assert dropped == ["lena"]
+    assert pending_residents_store.get_pending_by_uid(db, "lena") is None
+    assert pending_residents_store.list_pending_residents(db) == []
+
+
+async def test_check_approval_not_found_cleans_up_gracefully(tmp_path, monkeypatch):
+    db = _db(tmp_path)
+    rid = pending_residents_store.add_pending_resident(
+        db, "lena", "Lena", enrolled=True
+    )
+    pending_residents_store.set_request_id(db, rid, "req-42")
+    # SB no longer knows the request, and there is nothing to drop locally.
+    _stub_sb(monkeypatch, {"get_access_request_status": {"status": "not-found"}})
+    dropped = _stub_delete(monkeypatch, removed=False)
+
+    out = json.loads(
+        await _tools(db)["check_resident_approval"].handler({"uid": "lena"})
+    )
+    assert out["status"] == "not-found"
+    assert out["provisioned"] is False
+    assert out["biometric_dropped"] is False
+
+    # The (idempotent) delete still fired and the pending row is closed.
+    assert dropped == ["lena"]
+    assert pending_residents_store.get_pending_by_uid(db, "lena") is None
+    assert pending_residents_store.list_pending_residents(db) == []
 
 
 async def test_check_approval_pending_provisions_nothing(tmp_path, monkeypatch):
