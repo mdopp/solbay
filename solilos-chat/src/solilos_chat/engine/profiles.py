@@ -97,7 +97,11 @@ def build_engine_clients(
     # A guest may ask questions (web) and control devices/read state (HA), but
     # may NOT write anything durable — no notes/fact_store, no timers, no admin
     # MCP. The denial is the absence of those tool modules here (#353).
-    guest_tools: list[Tool] = list(ha_tools) + list(web_tools)
+    # ha_run_scene_script fires whole routines/automations; that's beyond a
+    # guest's "simple home control" remit, so it's withheld here (#370).
+    guest_tools: list[Tool] = [
+        t for t in ha_tools if t.name != "ha_run_scene_script"
+    ] + list(web_tools)
 
     def make(profile: EngineProfile) -> EngineClient:
         return EngineClient(
